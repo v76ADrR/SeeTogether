@@ -21,6 +21,39 @@ export interface Concept {id:string;name:string;elements:string[]}
 export interface Atlas {version:string;sex?:'male';source?:string;scope?:string;parts:Part[];concepts:Concept[];chunks:{url:string;bytes:number;gzip?:string;gzipBytes?:number}[];triangles:number}
 export type View = 'three-quarter'|'front'|'back'|'side';
 
+/**
+ * Part IDs that are unconditionally excluded from the viewer.
+ * These meshes are never loaded into the scene, never appear in concept lists,
+ * and are invisible to search and agent tools.
+ * Source: BodyParts3D FJ IDs confirmed from atlas.json.
+ */
+export const EXCLUDED_PART_IDS:ReadonlySet<string>=new Set([
+ 'FJ3132', // Corpus cavernosum of penis (reproductive)
+ 'FJ3133', // Corpus spongiosum of penis (reproductive)
+ 'FJ3134', // Glans penis (reproductive)
+ 'FJ3138', // Left testis (reproductive)
+ 'FJ3142', // Right testis (reproductive)
+ 'FJ2056', // Deep dorsal vein of penis (venous)
+ 'FJ2208', // Superficial dorsal vein of penis (venous)
+ 'FJ3426', // Left superficial dorsal vein of penis (venous)
+ 'FJ3496', // Left dorsal artery of penis (arterial)
+ 'FJ3497', // Left dorsal artery of penis (arterial)
+ 'FJ3592', // Right dorsal artery of penis (arterial)
+ 'FJ3593', // Right dorsal artery of penis (arterial)
+ 'FJ3637', // Right superficial dorsal vein of penis (venous)
+]);
+
+/** Return a copy of the atlas with excluded parts and their concepts stripped out. */
+export function scrubAtlas(raw:Atlas):Atlas{
+ const parts=raw.parts.filter(p=>!EXCLUDED_PART_IDS.has(p.id));
+ const allowed=new Set(parts.map(p=>p.id));
+ const concepts=raw.concepts
+  .map(c=>({...c,elements:c.elements.filter(id=>allowed.has(id))}))
+  .filter(c=>c.elements.length>0);
+ return {...raw,parts,concepts};
+}
+
+
 export type NervousSide='left'|'right'|'both';
 export type NervousSelection={kind:'ganglion'|'branch'|'zone';id:string;side?:'left'|'right'};
 export interface NervousLayers {cnv:boolean;v1:boolean;v2:boolean;v3Jaw:boolean;v3Temple:boolean}
