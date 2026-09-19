@@ -45,6 +45,33 @@ export const FACE_MUSCLE_ROWS:{id:FaceMuscleId;label:string;sub:string;color:str
  {id:'pterygoids',label:'Pterygoids',sub:'deep jaw & grinding',color:'#a35248',description:'Deep masticatory muscles on the sphenoid pterygoid plates. Medial elevates the jaw; lateral opens and protrudes the jaw with side-to-side grinding.'},
 ];
 
+export interface DentalLayers {
+ upperJaw: boolean;
+ lowerJaw: boolean;
+ teeth: boolean;
+ q1: boolean;
+ q2: boolean;
+ q3: boolean;
+ q4: boolean;
+ incisor: boolean;
+ canine: boolean;
+ premolar: boolean;
+ molar: boolean;
+}
+export const DEFAULT_DENTAL_LAYERS: DentalLayers = {
+ upperJaw: true,
+ lowerJaw: true,
+ teeth: true,
+ q1: true,
+ q2: true,
+ q3: true,
+ q4: true,
+ incisor: true,
+ canine: true,
+ premolar: true,
+ molar: true,
+};
+
 export interface SceneState {
  inspectorOpen?:boolean;
  explode:number;
@@ -63,6 +90,9 @@ export interface SceneState {
  smasLayers?:SmasLayers;
  smasSide?:NervousSide;
  faceMuscleLayers?:FaceMuscleLayers;
+ dentalOverlay?:boolean;
+ dentalLayers?:DentalLayers;
+ dentalSide?:NervousSide;
 }
 
 export const SKELETON_SYSTEM_IDS:SystemId[] = ['skeletal','muscular','connective','integumentary'];
@@ -73,6 +103,112 @@ export const SKELETON_VISIBLE:SystemId[] = ['skeletal','connective'];
 export const ORGANS_VISIBLE:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','reproductive','sensory','arterial','venous','lymphatic'];
 export const TRIGEMINAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
 export const FACE_VISIBLE:SystemId[] = ['skeletal','integumentary'];
+export const DENTAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
+
+export const DENTAL_QUADRANT_COLORS: Record<'q1' | 'q2' | 'q3' | 'q4', string> = {
+ q1: '#2aa8b8', // Upper right (Teal)
+ q2: '#3daf6a', // Upper left (Emerald)
+ q3: '#8a5bb8', // Lower left (Purple)
+ q4: '#e07a5f', // Lower right (Coral)
+};
+
+export const DENTAL_TYPE_COLORS: Record<'incisor' | 'canine' | 'premolar' | 'molar', string> = {
+ incisor: '#38bdf8', // Sky Blue
+ canine: '#fbbf24', // Amber
+ premolar: '#c084fc', // Violet
+ molar: '#fb7185', // Rose
+};
+
+export function isTooth(part: Part): boolean {
+ return /tooth|teeth/i.test(part.name);
+}
+
+export function isUpperJaw(part: Part): boolean {
+ return /maxilla|gingiva of upper jaw/i.test(part.name);
+}
+
+export function isLowerJaw(part: Part): boolean {
+ return /mandible|gingiva of lower jaw/i.test(part.name);
+}
+
+export function isJaw(part: Part): boolean {
+ return isUpperJaw(part) || isLowerJaw(part);
+}
+
+export function isDentalStructure(part: Part): boolean {
+ return isTooth(part) || isJaw(part);
+}
+
+export function getToothQuadrant(part: Part): 'q1' | 'q2' | 'q3' | 'q4' | null {
+ if (!isTooth(part)) return null;
+ const lower = part.name.toLowerCase();
+ const isUpper = lower.includes('upper');
+ const isLower = lower.includes('lower');
+ const isLeft = lower.includes('left');
+ const isRight = lower.includes('right');
+
+ if (isUpper && isRight) return 'q1';
+ if (isUpper && isLeft) return 'q2';
+ if (isLower && isLeft) return 'q3';
+ if (isLower && isRight) return 'q4';
+ return null;
+}
+
+export function getToothType(part: Part): 'incisor' | 'canine' | 'premolar' | 'molar' | null {
+ if (!isTooth(part)) return null;
+ const lower = part.name.toLowerCase();
+ if (lower.includes('incisor')) return 'incisor';
+ if (lower.includes('canine')) return 'canine';
+ if (lower.includes('premolar')) return 'premolar';
+ if (lower.includes('molar')) return 'molar';
+ return null;
+}
+
+export function partMatchesDental(part: Part, layers: DentalLayers, side: NervousSide = 'both'): boolean {
+ if (isTooth(part)) {
+  if (!layers.teeth) return false;
+  const lower = part.name.toLowerCase();
+  const isUpper = lower.includes('upper');
+  const isLower = lower.includes('lower');
+  const isLeft = lower.includes('left');
+  const isRight = lower.includes('right');
+
+  if (side === 'left' && isRight) return false;
+  if (side === 'right' && isLeft) return false;
+
+  let quadMatch = false;
+  if (isUpper && isRight && layers.q1) quadMatch = true;
+  else if (isUpper && isLeft && layers.q2) quadMatch = true;
+  else if (isLower && isLeft && layers.q3) quadMatch = true;
+  else if (isLower && isRight && layers.q4) quadMatch = true;
+  else if (!isUpper && !isLower && !isLeft && !isRight) quadMatch = true;
+  if (!quadMatch) return false;
+
+  let typeMatch = false;
+  if (lower.includes('incisor') && layers.incisor) typeMatch = true;
+  else if (lower.includes('canine') && layers.canine) typeMatch = true;
+  else if (lower.includes('premolar') && layers.premolar) typeMatch = true;
+  else if (lower.includes('molar') && !lower.includes('premolar') && layers.molar) typeMatch = true;
+  else if (!lower.includes('incisor') && !lower.includes('canine') && !lower.includes('premolar') && !lower.includes('molar')) typeMatch = true;
+  return typeMatch;
+ }
+
+ if (isUpperJaw(part)) {
+  if (!layers.upperJaw) return false;
+  if (side === 'left' && /\bright\b/i.test(part.name)) return false;
+  if (side === 'right' && /\bleft\b/i.test(part.name)) return false;
+  return true;
+ }
+
+ if (isLowerJaw(part)) {
+  if (!layers.lowerJaw) return false;
+  if (side === 'left' && /\bright\b/i.test(part.name)) return false;
+  if (side === 'right' && /\bleft\b/i.test(part.name)) return false;
+  return true;
+ }
+
+ return true;
+}
 
 export const EXPLANATIONS:Record<string,string> = {
  'heart':'A muscular pump in the chest. Its right side sends blood to the lungs; its left side sends blood through the systemic circulation.',

@@ -6,7 +6,7 @@ import {mergeGeometries} from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {createExplosionLayout} from './explosion-layout';
 import {decodeModelResponse} from './model-download';
 import {PointerTap} from './pointer-tap';
-import {SYSTEMS,type Atlas,type SceneState,type NervousSelection,type SmasSelection} from './anatomy';
+import {SYSTEMS,type Atlas,type SceneState,type NervousSelection,type SmasSelection,isDentalStructure,isTooth,getToothQuadrant,partMatchesDental,DEFAULT_DENTAL_LAYERS} from './anatomy';
 import {TRIGEMINAL_DATA} from './trigeminal-data';
 import {mirrorTrigeminal,partEnabled,type OverlayPartId} from './trigeminal';
 import {mountTrigeminalOverlay,type OverlayHandle} from './nervous-scene';
@@ -14,6 +14,7 @@ import {mountSmasOverlay,type SmasHandle} from './smas-scene';
 import {mirrorSmas,smasHoverLabel,type SmasData} from './smas';
 import {mountFaceMusclesOverlay,type FaceMusclesHandle} from './face-muscles-scene';
 import {FACE_MUSCLES_DATA,mirrorFaceMuscles} from './face-muscles';
+import {mountWisdomTeeth,type WisdomTeethHandle} from './wisdom-teeth';
 
 interface Props {atlas:Atlas;state:SceneState;onSelect:(id:string)=>void;onNervousSelect?:(sel:NervousSelection|null)=>void;onSmasSelect?:(sel:SmasSelection|null)=>void;onProgress:(n:number)=>void;onError:(s:string)=>void}
 export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSmasSelect,onProgress,onError}:Props){
@@ -61,6 +62,8 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
 
   const faceMusclesLeft:FaceMusclesHandle=mountFaceMusclesOverlay(overlayGroup,FACE_MUSCLES_DATA,'left');
   const faceMusclesRight:FaceMusclesHandle=mountFaceMusclesOverlay(overlayGroup,mirrorFaceMuscles(FACE_MUSCLES_DATA),'right');
+
+  const wisdomTeethHandle:WisdomTeethHandle=mountWisdomTeeth(overlayGroup);
 
   let smasLeft:SmasHandle|null=null,smasRight:SmasHandle|null=null;
   fetch('/models/smas.json',{signal:abort.signal})
@@ -113,11 +116,11 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
    });
    m.onBeforeCompile=shader=>{
     shader.uniforms.partState={value:partTexture};shader.uniforms.selectionState={value:selectionTexture};shader.uniforms.stateWidth={value:width};
-    shader.vertexShader='attribute float partIndex; uniform sampler2D partState; uniform sampler2D selectionState; uniform float stateWidth; varying float partVisible; varying float partSelected;\n'+shader.vertexShader;
-    shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvec2 stateUv = vec2((partIndex + 0.5) / stateWidth, 0.5); vec4 state = texture2D(partState, stateUv); transformed += state.xyz; partVisible = state.w; partSelected = texture2D(selectionState, stateUv).r;');
-    shader.fragmentShader='varying float partVisible; varying float partSelected;\n'+shader.fragmentShader;
+    shader.vertexShader='attribute float partIndex; uniform sampler2D partState; uniform sampler2D selectionState; uniform float stateWidth; varying float partVisible; varying vec4 partHighlight;\n'+shader.vertexShader;
+    shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvec2 stateUv = vec2((partIndex + 0.5) / stateWidth, 0.5); vec4 state = texture2D(partState, stateUv); transformed += state.xyz; partVisible = state.w; partHighlight = texture2D(selectionState, stateUv);');
+    shader.fragmentShader='varying float partVisible; varying vec4 partHighlight;\n'+shader.fragmentShader;
     shader.fragmentShader=shader.fragmentShader.replace('#include <clipping_planes_fragment>','#include <clipping_planes_fragment>\nif (partVisible < 0.5) discard;');
-    shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.85, 0.78), partSelected * 0.75);');
+    shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\nif (partHighlight.a > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, partHighlight.rgb, partHighlight.a);');
    };materials.push(m);return m;
   };
   const mats=new Map(SYSTEMS.map(s=>[s.id,materialFor(s.id)]));
@@ -143,9 +146,9 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
    const reservedHeight=mobile?350:270;const availableAspect=Math.max(.35,(el.clientWidth-(mobile?40:340))/Math.max(160,el.clientHeight-reservedHeight));const atlasDistance=Math.max(packingHeight,packingWidth/availableAspect)/(2*Math.tan(T.MathUtils.degToRad(camera.fov/2)))*(el.clientHeight/Math.max(160,el.clientHeight-reservedHeight))*1.08;
    let distance=T.MathUtils.lerp(normalDistance,Math.max(.2,atlasDistance),extent);if(extent>.8)view='front';
    
-   // If trigeminal or smas overlay is active and not exploding, focus on the head region
-   if((latest.current.nervousOverlay||latest.current.smasOverlay)&&extent<.1){
-    const face=latest.current.smasOverlay?(latest.current.smasSide||'left'):(latest.current.nervousSide||'left');
+   // If trigeminal, smas, or dental overlay is active and not exploding, focus on the head region
+   if((latest.current.nervousOverlay||latest.current.smasOverlay||latest.current.dentalOverlay)&&extent<.1){
+    const face=latest.current.smasOverlay?(latest.current.smasSide||'left'):latest.current.dentalOverlay?(latest.current.dentalSide||'left'):(latest.current.nervousSide||'left');
     const headDirection=face==='right'?new T.Vector3(-.45,.1,1).normalize():new T.Vector3(.45,.1,1).normalize();
     const headTarget=new T.Vector3(0,1.60,0.03);
     const headDistance=mobile?0.48:0.38;
@@ -258,7 +261,7 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
   const clock=new T.Clock();let lastExtent=-1;
   const animate=()=>{
    if(disposed)return;frame=requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05),s=latest.current;
-   const changed=lastState?.visible!==s.visible||lastState?.selected!==s.selected||lastState?.isolate!==s.isolate||lastState?.nervousOverlay!==s.nervousOverlay||lastState?.nervousLayers!==s.nervousLayers||lastState?.nervousSide!==s.nervousSide||lastState?.nervousSelection!==s.nervousSelection||lastState?.smasOverlay!==s.smasOverlay||lastState?.smasLayers!==s.smasLayers||lastState?.smasSide!==s.smasSide||lastState?.smasSelection!==s.smasSelection||lastState?.faceMuscleLayers!==s.faceMuscleLayers;
+   const changed=lastState?.visible!==s.visible||lastState?.selected!==s.selected||lastState?.isolate!==s.isolate||lastState?.nervousOverlay!==s.nervousOverlay||lastState?.nervousLayers!==s.nervousLayers||lastState?.nervousSide!==s.nervousSide||lastState?.nervousSelection!==s.nervousSelection||lastState?.smasOverlay!==s.smasOverlay||lastState?.smasLayers!==s.smasLayers||lastState?.smasSide!==s.smasSide||lastState?.smasSelection!==s.smasSelection||lastState?.faceMuscleLayers!==s.faceMuscleLayers||lastState?.dentalOverlay!==s.dentalOverlay||lastState?.dentalLayers!==s.dentalLayers||lastState?.dentalSide!==s.dentalSide;
    const moving=Math.abs(amount-s.explode)>.0001;
    if(moving){amount=T.MathUtils.damp(amount,s.explode,8,dt);dirty=true;}
    
@@ -298,6 +301,15 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
     faceMusclesRight.setLayers(s.faceMuscleLayers);
    }
 
+   // Sync wisdom teeth overlay (3rd molars)
+   const dentalSide=s.dentalSide||'left';
+   const anyDentalOn=s.dentalLayers?Object.values(s.dentalLayers).some(Boolean):false;
+   const dentalOverlayOn=!!s.dentalOverlay&&anyDentalOn&&amount<.2;
+   wisdomTeethHandle.setVisible(dentalOverlayOn);
+   if(s.dentalLayers){
+    wisdomTeethHandle.setLayers(s.dentalLayers,dentalSide);
+   }
+
    // Adjust material opacity for subtle skeletal + skin rendering in trigeminal / face mode
    const skelMat=mats.get('skeletal');
    if(skelMat instanceof T.MeshStandardMaterial){
@@ -312,7 +324,14 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
 
    if(changed||moving||lastExtent<0){
     const visible=new Set(s.visible),selection=new Set(s.selected);
-    const visibleParts=atlas.parts.filter(p=>s.isolate?selection.has(p.id):visible.has(p.system)||selection.has(p.id));
+    const visibleParts=atlas.parts.filter(p=>{
+     if(s.isolate)return selection.has(p.id);
+     if(selection.has(p.id))return true;
+     if(s.dentalOverlay&&isDentalStructure(p)){
+      return partMatchesDental(p,s.dentalLayers??DEFAULT_DENTAL_LAYERS,s.dentalSide??'both');
+     }
+     return visible.has(p.system);
+    });
     const nextLayoutKey=visibleParts.map(p=>p.id).join(',')+':'+camera.aspect.toFixed(3);
     if(nextLayoutKey!==layoutKey){const layout=createExplosionLayout(visibleParts,camera.aspect);packingWidth=layout.width;packingHeight=layout.height;atlas.parts.forEach((p,i)=>{const cell=layout.cells.get(p.id);offsets[i]=cell?new T.Vector3(cell.x,cell.y+.85,0):centers[i].clone();});layoutKey=nextLayoutKey;if(amount>.05&&!s.isolate)fit(s.view,Math.max(0,(amount-.3)/.7));}
 
@@ -320,7 +339,28 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
      const c=centers[i],destination=offsets[i];let dx=0,dy=0,dz=0;
      if(amount<=.45){const t=amount/.45;const group=SYSTEMS.findIndex(sys=>sys.id===p.system);const angle=group/SYSTEMS.length*Math.PI*2;dx=Math.sin(angle)*t*.48;dy=(c.y-.85)*t*.28;dz=Math.cos(angle)*t*.48;}
      else {const t=(amount-.45)/.55,group=SYSTEMS.findIndex(sys=>sys.id===p.system),angle=group/SYSTEMS.length*Math.PI*2;dx=T.MathUtils.lerp(Math.sin(angle)*.48,destination.x-c.x,t);dy=T.MathUtils.lerp((c.y-.85)*.28,destination.y-c.y,t);dz=T.MathUtils.lerp(Math.cos(angle)*.48,-c.z,t);}
-     const selected=selection.has(p.id);data.set([dx,dy,dz,(s.isolate?selected:visible.has(p.system)||selected)?1:0],i*4);selectedData[i*4]=selected?255:0;
+     const selected=selection.has(p.id);
+     let isPartVisible=false;
+     if(s.isolate){isPartVisible=selected;}
+     else if(selected){isPartVisible=true;}
+     else if(s.dentalOverlay&&isDentalStructure(p)){
+      isPartVisible=partMatchesDental(p,s.dentalLayers??DEFAULT_DENTAL_LAYERS,s.dentalSide??'both');
+     } else {
+      isPartVisible=visible.has(p.system);
+     }
+     data.set([dx,dy,dz,isPartVisible?1:0],i*4);
+     if(selected){
+      selectedData.set([107,217,199,191],i*4);
+     }else if(s.dentalOverlay&&isTooth(p)){
+      const quad=getToothQuadrant(p);
+      if(quad==='q1')selectedData.set([42,168,184,215],i*4);
+      else if(quad==='q2')selectedData.set([61,175,106,215],i*4);
+      else if(quad==='q3')selectedData.set([138,91,184,215],i*4);
+      else if(quad==='q4')selectedData.set([224,122,95,215],i*4);
+      else selectedData.set([0,0,0,0],i*4);
+     }else{
+      selectedData.set([0,0,0,0],i*4);
+     }
      markerPositions.set(data[i*4+3]>.5?[c.x+dx,c.y+dy,c.z+dz]:[10000,10000,10000],i*3);const mesh=pickers[i];if(mesh){mesh.position.set(dx,dy,dz);mesh.updateMatrix();mesh.updateMatrixWorld(true);}
     });partTexture.needsUpdate=true;selectionTexture.needsUpdate=true;markerGeometry.attributes.position.needsUpdate=true;lastState=s;lastExtent=amount;dirty=true;
    }
@@ -339,7 +379,7 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
 
   };animate();
   const contextLost=(e:Event)=>{e.preventDefault();onError('The 3D session was paused by your device. Reload to continue.');};renderer.domElement.addEventListener('webglcontextlost',contextLost);
-  return()=>{disposed=true;abort.abort();cancelAnimationFrame(frame);observer.disconnect();controls.dispose();leftHandle.dispose();rightHandle.dispose();smasLeft?.dispose();smasRight?.dispose();faceMusclesLeft.dispose();faceMusclesRight.dispose();geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());scene.traverse(o=>{if(o instanceof T.Mesh&&!geometries.includes(o.geometry)){o.geometry.dispose();const ms=Array.isArray(o.material)?o.material:[o.material];ms.forEach(m=>m.dispose());}});env.dispose();partTexture.dispose();selectionTexture.dispose();markerGeometry.dispose();markerMaterial.dispose();hover.remove();labels.remove();renderer.dispose();renderer.domElement.remove();};
+  return()=>{disposed=true;abort.abort();cancelAnimationFrame(frame);observer.disconnect();controls.dispose();leftHandle.dispose();rightHandle.dispose();smasLeft?.dispose();smasRight?.dispose();faceMusclesLeft.dispose();faceMusclesRight.dispose();wisdomTeethHandle.dispose();geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());scene.traverse(o=>{if(o instanceof T.Mesh&&!geometries.includes(o.geometry)){o.geometry.dispose();const ms=Array.isArray(o.material)?o.material:[o.material];ms.forEach(m=>m.dispose());}});env.dispose();partTexture.dispose();selectionTexture.dispose();markerGeometry.dispose();markerMaterial.dispose();hover.remove();labels.remove();renderer.dispose();renderer.domElement.remove();};
  },[atlas]);
  return <div className="scene" ref={host}/>;
 }

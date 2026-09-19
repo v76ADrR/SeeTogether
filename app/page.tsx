@@ -1,7 +1,7 @@
 import {flushSync} from 'react-dom';
 import {registerAtlasTools} from './agent-tools';
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {Activity,ArrowUpRight,ChevronRight,Focus,Info,Layers3,Lock,Pause,RotateCcw,RotateCw,Search,Unlock,X} from 'lucide-react';
+import {Activity,ArrowUpRight,Bone,ChevronRight,Focus,HeartPulse,Info,Layers3,Lock,Pause,RotateCcw,RotateCw,ScanFace,Search,Unlock,X,Zap} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
 import {Slider} from '@/components/ui/slider';
@@ -15,16 +15,24 @@ import {
  ORGANS_VISIBLE,
  TRIGEMINAL_VISIBLE,
  FACE_VISIBLE,
+ DENTAL_VISIBLE,
+ DENTAL_QUADRANT_COLORS,
+ DENTAL_TYPE_COLORS,
  SKELETON_SYSTEM_IDS,
  ORGAN_SYSTEM_IDS,
  DEFAULT_NERVOUS_LAYERS,
  DEFAULT_NERVOUS_SIDE,
  DEFAULT_SMAS_LAYERS,
  DEFAULT_FACE_MUSCLE_LAYERS,
+ DEFAULT_DENTAL_LAYERS,
  FACE_MUSCLE_ROWS,
  SYSTEMS,
  EXPLANATIONS,
  explanation,
+ isTooth,
+ isJaw,
+ isDentalStructure,
+ partMatchesDental,
  type Atlas,
  type Concept,
  type SceneState,
@@ -36,12 +44,19 @@ import {
  type SmasLayers,
  type SmasSelection,
  type FaceMuscleLayers,
- type FaceMuscleId
+ type FaceMuscleId,
+ type DentalLayers
 } from './anatomy';
 import {overlayCard} from './trigeminal';
 import {FACIAL_NERVE_ROWS,DEEP_TISSUE_ROWS,smasCard,SMAS_COLOR,FAT_COLOR,FACIAL_NERVE_COLOR,PAROTID_COLOR,LYMPH_COLOR,PERIOSTEUM_COLOR} from './smas';
 
-type PillType = 'all' | 'skeleton' | 'trigeminal' | 'face' | 'organs';
+const ToothIcon = ({ size = 15 }: { size?: number }) => (
+ <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  <path d="M7 3C4.2 3 2 5.2 2 8c0 3.5 1.5 7.5 3 11 1 2.3 3 2.3 4 0l1-3.5c.5-1.5 2.5-1.5 3 0l1 3.5c1 2.3 3 2.3 4 0 1.5-3.5 3-7.5 3-11 0-2.8-2.2-5-5-5-2 0-3.5 1.2-4 2.5C10.5 4.2 9 3 7 3z"/>
+ </svg>
+);
+
+type PillType = 'all' | 'skeleton' | 'trigeminal' | 'face' | 'dental' | 'organs';
 
 const initial:SceneState={
  explode:0,
@@ -59,7 +74,10 @@ const initial:SceneState={
  smasSelection:null,
  smasLayers:DEFAULT_SMAS_LAYERS,
  smasSide:DEFAULT_NERVOUS_SIDE,
- faceMuscleLayers:DEFAULT_FACE_MUSCLE_LAYERS
+ faceMuscleLayers:DEFAULT_FACE_MUSCLE_LAYERS,
+ dentalOverlay:false,
+ dentalLayers:DEFAULT_DENTAL_LAYERS,
+ dentalSide:DEFAULT_NERVOUS_SIDE
 };
 
 export default function Home(){
@@ -114,6 +132,19 @@ export default function Home(){
   faceMuscleLayers: DEFAULT_FACE_MUSCLE_LAYERS,
   side: DEFAULT_NERVOUS_SIDE,
   visible: FACE_VISIBLE
+ });
+
+ type DentalSnapshot = {
+  dentalLayers: DentalLayers;
+  side: NervousSide;
+  visible: SystemId[];
+ };
+
+ // Snapshot ref to persist Dental overlay layers, side, and visibility across pill switching
+ const dentalSnapshotRef=useRef<DentalSnapshot>({
+  dentalLayers: DEFAULT_DENTAL_LAYERS,
+  side: DEFAULT_NERVOUS_SIDE,
+  visible: DENTAL_VISIBLE
  });
 
  // Snapshot ref to persist Organs visibility across pill switching
@@ -171,6 +202,22 @@ export default function Home(){
     }
    }
   }
+  if(focus!=='dental'){
+   if(next.dentalLayers){
+    next.dentalLayers={...next.dentalLayers};
+    for(const k of Object.keys(next.dentalLayers)){
+     const key=k as keyof DentalLayers;
+     if(!locks['dental_'+key]){
+      (next.dentalLayers as any)[key]=false;
+     }
+    }
+    if(Object.values(next.dentalLayers).every(v=>!v)){
+     if(!Object.keys(locks).some(k=>k.startsWith('dental_')&&locks[k])){
+      next.dentalOverlay=false;
+     }
+    }
+   }
+  }
   return next;
  };
 
@@ -205,7 +252,14 @@ export default function Home(){
  const counts=useMemo(()=>Object.fromEntries(SYSTEMS.map(s=>[s.id,atlas?.parts.filter(p=>p.system===s.id).length??0])),[atlas]);
  const activeSystems=SYSTEMS.filter(s=>counts[s.id]>0);
  const selectedParts=state.selected.map(id=>parts.get(id)).filter(p=>!!p),selected=selectedParts[0],system=SYSTEMS.find(s=>s.id===selected?.system);
- const visibleCount=atlas?.parts.filter(p=>state.isolate?state.selected.includes(p.id):state.visible.includes(p.system)||state.selected.includes(p.id)).length??0;
+ const visibleCount=atlas?.parts.filter(p=>{
+  if(state.isolate)return state.selected.includes(p.id);
+  if(state.selected.includes(p.id))return true;
+  if(state.dentalOverlay&&isDentalStructure(p)){
+   return partMatchesDental(p,state.dentalLayers??DEFAULT_DENTAL_LAYERS,state.dentalSide??'both');
+  }
+  return state.visible.includes(p.system);
+ }).length??0;
  
  const results=useMemo(()=>{
   if(!atlas)return[];
@@ -267,6 +321,9 @@ export default function Home(){
    if(activePill==='face'){
     faceSnapshotRef.current.visible=nextVisible;
    }
+   if(activePill==='dental'){
+    dentalSnapshotRef.current.visible=nextVisible;
+   }
    if(activePill==='organs'){
     organsVisibleRef.current=nextVisible.filter(x=>ORGAN_SYSTEM_IDS.includes(x));
    }
@@ -290,6 +347,11 @@ export default function Home(){
    faceMuscleLayers:DEFAULT_FACE_MUSCLE_LAYERS,
    side:DEFAULT_NERVOUS_SIDE,
    visible:FACE_VISIBLE
+  };
+  dentalSnapshotRef.current={
+   dentalLayers:DEFAULT_DENTAL_LAYERS,
+   side:DEFAULT_NERVOUS_SIDE,
+   visible:DENTAL_VISIBLE
   };
   organsVisibleRef.current=ORGANS_VISIBLE;
   setActivePill('all');
@@ -367,6 +429,28 @@ export default function Home(){
   setState(s=>({...s,smasSide:side,smasSelection:null,reset:s.reset+1}));
  };
 
+ const patchDentalLayers=(patch:Partial<DentalLayers>)=>{
+  setState(s=>{
+   const nextLayers={...(s.dentalLayers??DEFAULT_DENTAL_LAYERS),...patch};
+   if(activePill==='dental'){
+    dentalSnapshotRef.current.dentalLayers=nextLayers;
+   }
+   const anyDentalOn=Object.values(nextLayers).some(Boolean);
+   return {
+    ...s,
+    dentalLayers:nextLayers,
+    dentalOverlay:activePill==='dental'||anyDentalOn
+   };
+  });
+ };
+
+ const setDentalSide=(side:NervousSide)=>{
+  if(activePill==='dental'){
+   dentalSnapshotRef.current.side=side;
+  }
+  setState(s=>({...s,dentalSide:side,reset:s.reset+1}));
+ };
+
  const selectPill=(pill:PillType)=>{
   if(activePill==='all'){
    allSnapshotRef.current={
@@ -392,6 +476,13 @@ export default function Home(){
     visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
    };
   }
+  if(activePill==='dental'){
+   dentalSnapshotRef.current={
+    dentalLayers:state.dentalLayers??DEFAULT_DENTAL_LAYERS,
+    side:state.dentalSide??DEFAULT_NERVOUS_SIDE,
+    visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
+   };
+  }
   if(activePill==='organs'){
    organsVisibleRef.current=state.visible.filter(x=>ORGAN_SYSTEM_IDS.includes(x));
   }
@@ -404,30 +495,37 @@ export default function Home(){
     const saved=allSnapshotRef.current;
     const savedVisible=saved.visible??DEFAULT_VISIBLE;
     const anyNervousOn=Object.values(saved.nervousLayers).some(Boolean);
-    return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,selected:[],isolate:false,visible:savedVisible};
+    return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,selected:[],isolate:false,visible:savedVisible};
    });
   } else if(pill==='skeleton'){
     setState(s=>{
      const savedSkeleton=(skeletonVisibleRef.current??SKELETON_VISIBLE).filter(x=>SKELETON_SYSTEM_IDS.includes(x));
-     return {...s,nervousOverlay:false,smasOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedSkeleton};
+     return {...s,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedSkeleton};
     });
    } else if(pill==='trigeminal'){
     setState(s=>{
      const saved=trigeminalSnapshotRef.current;
      const savedVisible=(saved.visible??TRIGEMINAL_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
      const anyNervousOn=Object.values(saved.nervousLayers).some(Boolean);
-     return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,nervousSide:saved.nervousSide,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
+     return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,nervousSide:saved.nervousSide,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
     });
    } else if(pill==='face'){
     setState(s=>{
      const saved=faceSnapshotRef.current;
      const savedVisible=(saved.visible??FACE_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
-     return {...s,smasOverlay:true,nervousOverlay:false,smasSelection:null,nervousSelection:null,smasLayers:saved.smasLayers,smasSide:saved.side,faceMuscleLayers:saved.faceMuscleLayers,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
+     return {...s,smasOverlay:true,nervousOverlay:false,dentalOverlay:false,smasSelection:null,nervousSelection:null,smasLayers:saved.smasLayers,smasSide:saved.side,faceMuscleLayers:saved.faceMuscleLayers,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
+    });
+   } else if(pill==='dental'){
+    setState(s=>{
+     const saved=dentalSnapshotRef.current;
+     const savedVisible=(saved.visible??DENTAL_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
+     const anyDentalOn=Object.values(saved.dentalLayers).some(Boolean);
+     return {...s,dentalOverlay:anyDentalOn,nervousOverlay:false,smasOverlay:false,nervousSelection:null,smasSelection:null,dentalLayers:saved.dentalLayers,dentalSide:saved.side,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
     });
    } else if(pill==='organs'){
     setState(s=>{
      const savedOrgans=(organsVisibleRef.current??ORGANS_VISIBLE).filter(x=>ORGAN_SYSTEM_IDS.includes(x));
-     return {...s,nervousOverlay:false,smasOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedOrgans};
+     return {...s,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedOrgans};
     });
    }
   };
@@ -439,13 +537,15 @@ export default function Home(){
  const showSkeletonRows = activePill === 'all' || activePill === 'skeleton';
  const showTrigeminalRows = activePill === 'all' || activePill === 'trigeminal';
  const showFaceRows = activePill === 'face';
+ const showDentalRows = activePill === 'all' || activePill === 'dental';
  const showOrganRows = activePill === 'all' || activePill === 'organs';
 
  // Skeleton group includes skeleton, muscles, connective tissue, body surface
  const skeletonSystems = activeSystems.filter(s=>SKELETON_SYSTEM_IDS.includes(s.id));
- // Base systems for Trigeminal & Face (Skeleton + Body surface)
+ // Base systems for Trigeminal, Face & Dental (Skeleton + Body surface)
  const trigeminalBaseSystems = activeSystems.filter(s=>TRIGEMINAL_VISIBLE.includes(s.id));
  const faceBaseSystems = activeSystems.filter(s=>FACE_VISIBLE.includes(s.id));
+ const dentalBaseSystems = activeSystems.filter(s=>DENTAL_VISIBLE.includes(s.id));
  // Organ group includes visceral organs, cardiac, vascular, nervous
  const organSystems = activeSystems.filter(s=>ORGAN_SYSTEM_IDS.includes(s.id));
 
@@ -483,16 +583,17 @@ export default function Home(){
     </div>
    </div>
 
-   {/* Systems pills: All | Skeleton | Trigeminal | Face | Organs */}
-   <div className="layer-presets">
-    <Button variant="ghost" aria-pressed={activePill==='all'} onClick={()=>selectPill('all')}>All</Button>
-    <Button variant="ghost" aria-pressed={activePill==='skeleton'} onClick={()=>selectPill('skeleton')}>Skeleton</Button>
-    <Button variant="ghost" aria-pressed={activePill==='trigeminal'} onClick={()=>selectPill('trigeminal')}>Trigeminal</Button>
-    <Button variant="ghost" aria-pressed={activePill==='face'} onClick={()=>selectPill('face')}>Face</Button>
-    <Button variant="ghost" aria-pressed={activePill==='organs'} onClick={()=>selectPill('organs')}>Organs</Button>
+   {/* Systems pills: All | Skeleton | Trigeminal | Face | Dental | Organs */}
+   <div className="layer-presets" role="tablist" aria-label="Systems view selector">
+    <Button variant="ghost" aria-pressed={activePill==='all'} onClick={()=>selectPill('all')} title="All Systems" aria-label="All Systems"><Layers3 size={15}/></Button>
+    <Button variant="ghost" aria-pressed={activePill==='skeleton'} onClick={()=>selectPill('skeleton')} title="Skeleton & Soft Tissue" aria-label="Skeleton"><Bone size={15}/></Button>
+    <Button variant="ghost" aria-pressed={activePill==='trigeminal'} onClick={()=>selectPill('trigeminal')} title="Trigeminal (CN V)" aria-label="Trigeminal"><Zap size={15}/></Button>
+    <Button variant="ghost" aria-pressed={activePill==='face'} onClick={()=>selectPill('face')} title="Face & SMAS" aria-label="Face"><ScanFace size={15}/></Button>
+    <Button variant="ghost" aria-pressed={activePill==='dental'} onClick={()=>selectPill('dental')} title="Dentition & Jaws (32 Teeth)" aria-label="Dental"><ToothIcon size={15}/></Button>
+    <Button variant="ghost" aria-pressed={activePill==='organs'} onClick={()=>selectPill('organs')} title="Organs & Viscera" aria-label="Organs"><HeartPulse size={15}/></Button>
    </div>
 
-   {/* Laterality controls for Trigeminal and Face pills */}
+   {/* Laterality controls for Trigeminal, Face, and Dental pills */}
    {activePill==='trigeminal' && (
     <div className="side-presets layer-presets">
      <Button variant="ghost" aria-pressed={state.nervousSide==='left'} onClick={()=>setNervousSide('left')}>Left</Button>
@@ -505,6 +606,13 @@ export default function Home(){
      <Button variant="ghost" aria-pressed={(state.smasSide??'left')==='left'} onClick={()=>setFaceSide('left')}>Left</Button>
      <Button variant="ghost" aria-pressed={state.smasSide==='right'} onClick={()=>setFaceSide('right')}>Right</Button>
      <Button variant="ghost" aria-pressed={state.smasSide==='both'} onClick={()=>setFaceSide('both')}>Both</Button>
+    </div>
+   )}
+   {activePill==='dental' && (
+    <div className="side-presets layer-presets">
+     <Button variant="ghost" aria-pressed={(state.dentalSide??'left')==='left'} onClick={()=>setDentalSide('left')}>Left</Button>
+     <Button variant="ghost" aria-pressed={state.dentalSide==='right'} onClick={()=>setDentalSide('right')}>Right</Button>
+     <Button variant="ghost" aria-pressed={state.dentalSide==='both'} onClick={()=>setDentalSide('both')}>Both</Button>
     </div>
    )}
 
@@ -791,6 +899,188 @@ export default function Home(){
      </div>
     )}
 
+     {/* Dental rows (Base + Jaw groups + Quadrants + Types) */}
+     {showDentalRows && (
+      <div className="overlay-layers" aria-label="Dental layers">
+       {activePill === 'all' && <div className="system-column-label">Dentition & Jaws</div>}
+
+       {/* Base systems for Dental: Skeleton & Body surface */}
+       {activePill === 'dental' && dentalBaseSystems.map(s => (
+        <div className={`system-row ${state.visible.includes(s.id) ? 'enabled' : ''}`} key={s.id}>
+         <Button variant="ghost" className="system-name" title={`Show only ${s.name.toLowerCase()}`} onClick={() => setState(v => {
+          const l = applyLocks(v, 'dental');
+          const visible = l.visible.filter(x => locks[x]);
+          if (!visible.includes(s.id)) visible.push(s.id);
+          if (activePill === 'dental') {
+           dentalSnapshotRef.current.visible = visible;
+          }
+          return { ...l, visible, isolate: false, selected: [] };
+         })}>
+          <span className="system-dot" style={{ background: s.color }} /><span className="system-label">{s.name}</span><span className="system-count">{counts[s.id]}</span>
+         </Button>
+         <div className="system-actions">
+          <Switch checked={state.visible.includes(s.id)} onCheckedChange={() => toggle(s.id)} aria-label={`Show ${s.name.toLowerCase()}`} />
+          <Button variant="ghost" className={`lock-btn ${locks[s.id] ? 'locked' : ''}`} onClick={() => toggleLock(s.id)} aria-label={locks[s.id] ? 'Unlock' : 'Lock'} title={locks[s.id] ? 'Unlock row' : 'Lock row'}>
+           {locks[s.id] ? <Lock size={13} /> : <Unlock size={13} />}
+          </Button>
+         </div>
+        </div>
+       ))}
+
+       {/* Subsection: Jaw groups */}
+       <div className="system-column-label">Jaw groups</div>
+
+       {/* Upper jaw */}
+       <div className={`system-row ${(state.dentalLayers?.upperJaw ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="Maxillae bones forming the upper jaw, palate, and upper gingiva" onClick={() => patchDentalLayers({ upperJaw: !(state.dentalLayers?.upperJaw ?? true) })}>
+         <span className="system-dot" style={{ background: '#e5dec9' }} /><span className="system-label">Upper jaw</span><span className="layer-sub">maxilla & gingiva</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.upperJaw ?? true} onCheckedChange={on => patchDentalLayers({ upperJaw: on })} aria-label="Show upper jaw" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_upperJaw'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_upperJaw')} aria-label={locks['dental_upperJaw'] ? 'Unlock' : 'Lock'} title={locks['dental_upperJaw'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_upperJaw'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Lower jaw */}
+       <div className={`system-row ${(state.dentalLayers?.lowerJaw ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="Mandible bone forming the lower jaw and lower gingiva" onClick={() => patchDentalLayers({ lowerJaw: !(state.dentalLayers?.lowerJaw ?? true) })}>
+         <span className="system-dot" style={{ background: '#ded5be' }} /><span className="system-label">Lower jaw</span><span className="layer-sub">mandible & gingiva</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.lowerJaw ?? true} onCheckedChange={on => patchDentalLayers({ lowerJaw: on })} aria-label="Show lower jaw" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_lowerJaw'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_lowerJaw')} aria-label={locks['dental_lowerJaw'] ? 'Unlock' : 'Lock'} title={locks['dental_lowerJaw'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_lowerJaw'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Teeth */}
+       <div className={`system-row ${(state.dentalLayers?.teeth ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="32 adult secondary teeth anchored in the alveolar processes of maxilla and mandible" onClick={() => patchDentalLayers({ teeth: !(state.dentalLayers?.teeth ?? true) })}>
+         <span className="system-dot" style={{ background: '#38bdf8' }} /><span className="system-label">Teeth</span><span className="layer-sub">32 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.teeth ?? true} onCheckedChange={on => patchDentalLayers({ teeth: on })} aria-label="Show teeth" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_teeth'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_teeth')} aria-label={locks['dental_teeth'] ? 'Unlock' : 'Lock'} title={locks['dental_teeth'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_teeth'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Subsection: Quadrants */}
+       <div className="system-column-label">Quadrants</div>
+
+       {/* Q1 upper right */}
+       <div className={`system-row ${(state.dentalLayers?.q1 ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="Quadrant 1: Maxillary upper right quadrant (8 teeth: incisors to 3rd molar)" onClick={() => patchDentalLayers({ q1: !(state.dentalLayers?.q1 ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_QUADRANT_COLORS.q1 }} /><span className="system-label">Q1 upper right</span><span className="layer-sub">8 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.q1 ?? true} onCheckedChange={on => patchDentalLayers({ q1: on })} aria-label="Show Q1 upper right" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_q1'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_q1')} aria-label={locks['dental_q1'] ? 'Unlock' : 'Lock'} title={locks['dental_q1'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_q1'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Q2 upper left */}
+       <div className={`system-row ${(state.dentalLayers?.q2 ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="Quadrant 2: Maxillary upper left quadrant (8 teeth: incisors to 3rd molar)" onClick={() => patchDentalLayers({ q2: !(state.dentalLayers?.q2 ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_QUADRANT_COLORS.q2 }} /><span className="system-label">Q2 upper left</span><span className="layer-sub">8 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.q2 ?? true} onCheckedChange={on => patchDentalLayers({ q2: on })} aria-label="Show Q2 upper left" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_q2'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_q2')} aria-label={locks['dental_q2'] ? 'Unlock' : 'Lock'} title={locks['dental_q2'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_q2'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Q3 lower left */}
+       <div className={`system-row ${(state.dentalLayers?.q3 ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="Quadrant 3: Mandibular lower left quadrant (8 teeth: incisors to 3rd molar)" onClick={() => patchDentalLayers({ q3: !(state.dentalLayers?.q3 ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_QUADRANT_COLORS.q3 }} /><span className="system-label">Q3 lower left</span><span className="layer-sub">8 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.q3 ?? true} onCheckedChange={on => patchDentalLayers({ q3: on })} aria-label="Show Q3 lower left" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_q3'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_q3')} aria-label={locks['dental_q3'] ? 'Unlock' : 'Lock'} title={locks['dental_q3'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_q3'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Q4 lower right */}
+       <div className={`system-row ${(state.dentalLayers?.q4 ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="Quadrant 4: Mandibular lower right quadrant (8 teeth: incisors to 3rd molar)" onClick={() => patchDentalLayers({ q4: !(state.dentalLayers?.q4 ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_QUADRANT_COLORS.q4 }} /><span className="system-label">Q4 lower right</span><span className="layer-sub">8 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.q4 ?? true} onCheckedChange={on => patchDentalLayers({ q4: on })} aria-label="Show Q4 lower right" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_q4'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_q4')} aria-label={locks['dental_q4'] ? 'Unlock' : 'Lock'} title={locks['dental_q4'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_q4'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Subsection: Types */}
+       <div className="system-column-label">Types</div>
+
+       {/* Incisor */}
+       <div className={`system-row ${(state.dentalLayers?.incisor ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="8 incisor teeth (4 central, 4 lateral) for cutting and shearing food" onClick={() => patchDentalLayers({ incisor: !(state.dentalLayers?.incisor ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_TYPE_COLORS.incisor }} /><span className="system-label">Incisor</span><span className="layer-sub">8 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.incisor ?? true} onCheckedChange={on => patchDentalLayers({ incisor: on })} aria-label="Show incisor teeth" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_incisor'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_incisor')} aria-label={locks['dental_incisor'] ? 'Unlock' : 'Lock'} title={locks['dental_incisor'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_incisor'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Canine */}
+       <div className={`system-row ${(state.dentalLayers?.canine ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="4 canine teeth (cuspids) for tearing food" onClick={() => patchDentalLayers({ canine: !(state.dentalLayers?.canine ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_TYPE_COLORS.canine }} /><span className="system-label">Canine</span><span className="layer-sub">4 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.canine ?? true} onCheckedChange={on => patchDentalLayers({ canine: on })} aria-label="Show canine teeth" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_canine'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_canine')} aria-label={locks['dental_canine'] ? 'Unlock' : 'Lock'} title={locks['dental_canine'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_canine'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Premolar */}
+       <div className={`system-row ${(state.dentalLayers?.premolar ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="8 premolar teeth (bicuspids) for crushing food" onClick={() => patchDentalLayers({ premolar: !(state.dentalLayers?.premolar ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_TYPE_COLORS.premolar }} /><span className="system-label">Premolar</span><span className="layer-sub">8 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.premolar ?? true} onCheckedChange={on => patchDentalLayers({ premolar: on })} aria-label="Show premolar teeth" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_premolar'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_premolar')} aria-label={locks['dental_premolar'] ? 'Unlock' : 'Lock'} title={locks['dental_premolar'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_premolar'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+
+       {/* Molar */}
+       <div className={`system-row ${(state.dentalLayers?.molar ?? true) ? 'enabled' : ''}`}>
+        <Button variant="ghost" className="system-name" title="12 molar teeth (1st, 2nd, and 3rd wisdom molars) for chewing and grinding food" onClick={() => patchDentalLayers({ molar: !(state.dentalLayers?.molar ?? true) })}>
+         <span className="system-dot" style={{ background: DENTAL_TYPE_COLORS.molar }} /><span className="system-label">Molar</span><span className="layer-sub">12 teeth</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.dentalLayers?.molar ?? true} onCheckedChange={on => patchDentalLayers({ molar: on })} aria-label="Show molar teeth" />
+         <Button variant="ghost" className={`lock-btn ${locks['dental_molar'] ? 'locked' : ''}`} onClick={() => toggleLock('dental_molar')} aria-label={locks['dental_molar'] ? 'Unlock' : 'Lock'} title={locks['dental_molar'] ? 'Unlock row' : 'Lock row'}>
+          {locks['dental_molar'] ? <Lock size={13} /> : <Unlock size={13} />}
+         </Button>
+        </div>
+       </div>
+      </div>
+     )}
+
     {/* Organ rows */}
     {showOrganRows && (
      <div className="stock-systems" aria-label="Organ systems">
@@ -850,10 +1140,18 @@ export default function Home(){
          masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false
         };
        }
+       if(activePill==='dental'){
+        dentalSnapshotRef.current.visible=[];
+        dentalSnapshotRef.current.dentalLayers={
+         upperJaw:false,lowerJaw:false,teeth:false,
+         q1:false,q2:false,q3:false,q4:false,
+         incisor:false,canine:false,premolar:false,molar:false
+        };
+       }
        if(activePill==='organs'){
         organsVisibleRef.current=[];
        }
-       setState(s=>({...s,visible:[],selected:[],isolate:false,nervousOverlay:false,smasOverlay:false,faceMuscleLayers:{masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false}}));
+       setState(s=>({...s,visible:[],selected:[],isolate:false,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,faceMuscleLayers:{masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false},dentalLayers:{upperJaw:false,lowerJaw:false,teeth:false,q1:false,q2:false,q3:false,q4:false,incisor:false,canine:false,premolar:false,molar:false}}));
       }}>Hide all</Button>
      )}
    </div>
