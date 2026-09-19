@@ -22,6 +22,7 @@ Use these tools only when they are relevant to the task. Do not assume access to
 - Before any commit, show the user what will be committed and wait for explicit approval unless the user already requested the commit.
 - Never use force-push or destructive Git commands such as `git reset --hard` or `git clean -fd` without explicit approval.
 - Do not commit secrets, credentials, API keys, generated dependencies, or local environment files.
+- Never commit personal Git, IDE, editor, or user configuration; respect `.gitignore`, run or remind the user to run `npm run sanitize` before pushing, and do not re-add ignored personal files.
 
 ## Changes and validation
 

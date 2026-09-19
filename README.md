@@ -18,9 +18,18 @@ An interactive 3D anatomy explorer built with React, Three.js, and shadcn/ui. Ta
 Requires Node.js 22.13 or newer. No API keys or accounts are needed.
 
 ```sh
+npm run setup
+```
+
+For a fresh clone, the setup helper installs the locked dependencies and checks local-only files. You can run the individual commands yourself:
+
+```sh
 npm ci
+npm run sanitize
 npm run dev
 ```
+
+Run `npm run sanitize` before first work and before pushing changes.
 
 Open http://localhost:3016. To build the static site, run `npm run build`; the output is in `dist/`.
 
