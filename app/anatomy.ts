@@ -20,8 +20,36 @@ export interface Part {id:string;name:string;conceptId:string;system:SystemId;ch
 export interface Concept {id:string;name:string;elements:string[]}
 export interface Atlas {version:string;sex?:'male';source?:string;scope?:string;parts:Part[];concepts:Concept[];chunks:{url:string;bytes:number;gzip?:string;gzipBytes?:number}[];triangles:number}
 export type View = 'three-quarter'|'front'|'back'|'side';
-export interface SceneState {inspectorOpen?:boolean;explode:number;visible:SystemId[];selected:string[];isolate:boolean;view:View;rotate:boolean;reset:number}
+
+export type NervousSide='left'|'right'|'both';
+export type NervousSelection={kind:'ganglion'|'branch'|'zone';id:string;side?:'left'|'right'};
+export interface NervousLayers {cnv:boolean;v1:boolean;v2:boolean;v3Jaw:boolean;v3Temple:boolean}
+export const DEFAULT_NERVOUS_LAYERS:NervousLayers={cnv:true,v1:true,v2:true,v3Jaw:true,v3Temple:true};
+export const DEFAULT_NERVOUS_SIDE:NervousSide='left';
+
+export interface SceneState {
+ inspectorOpen?:boolean;
+ explode:number;
+ visible:SystemId[];
+ selected:string[];
+ isolate:boolean;
+ view:View;
+ rotate:boolean;
+ reset:number;
+ nervousOverlay:boolean;
+ nervousSelection:NervousSelection|null;
+ nervousLayers:NervousLayers;
+ nervousSide:NervousSide;
+}
+
+export const SKELETON_SYSTEM_IDS:SystemId[] = ['skeletal','muscular','connective','integumentary'];
+export const ORGAN_SYSTEM_IDS:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','reproductive','sensory','arterial','venous','lymphatic','nervous'];
+
 export const DEFAULT_VISIBLE:SystemId[] = ['cardiac','sensory','skeletal','muscular','arterial','venous','nervous','respiratory','digestive','urinary','lymphatic','endocrine','reproductive','connective'];
+export const SKELETON_VISIBLE:SystemId[] = ['skeletal','connective'];
+export const ORGANS_VISIBLE:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','reproductive','sensory','arterial','venous','lymphatic'];
+export const TRIGEMINAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
+
 export const EXPLANATIONS:Record<string,string> = {
  'heart':'A muscular pump in the chest. Its right side sends blood to the lungs; its left side sends blood through the systemic circulation.',
  'liver':'A large organ beneath the right side of the diaphragm. It processes absorbed nutrients, produces bile, and synthesizes many proteins carried in the blood.',
