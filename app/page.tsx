@@ -1,7 +1,7 @@
 import {flushSync} from 'react-dom';
 import {registerAtlasTools} from './agent-tools';
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {Activity,ArrowUpRight,ChevronRight,Focus,Info,Layers3,Pause,RotateCcw,RotateCw,Search,X} from 'lucide-react';
+import {Activity,ArrowUpRight,ChevronRight,Focus,Info,Layers3,Lock,Pause,RotateCcw,RotateCw,Search,Unlock,X} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
 import {Slider} from '@/components/ui/slider';
@@ -14,10 +14,14 @@ import {
  SKELETON_VISIBLE,
  ORGANS_VISIBLE,
  TRIGEMINAL_VISIBLE,
+ FACE_VISIBLE,
  SKELETON_SYSTEM_IDS,
  ORGAN_SYSTEM_IDS,
  DEFAULT_NERVOUS_LAYERS,
  DEFAULT_NERVOUS_SIDE,
+ DEFAULT_SMAS_LAYERS,
+ DEFAULT_FACE_MUSCLE_LAYERS,
+ FACE_MUSCLE_ROWS,
  SYSTEMS,
  EXPLANATIONS,
  explanation,
@@ -28,11 +32,16 @@ import {
  type View,
  type NervousSide,
  type NervousLayers,
- type NervousSelection
+ type NervousSelection,
+ type SmasLayers,
+ type SmasSelection,
+ type FaceMuscleLayers,
+ type FaceMuscleId
 } from './anatomy';
 import {overlayCard} from './trigeminal';
+import {FACIAL_NERVE_ROWS,DEEP_TISSUE_ROWS,smasCard,SMAS_COLOR,FAT_COLOR,FACIAL_NERVE_COLOR,PAROTID_COLOR,LYMPH_COLOR,PERIOSTEUM_COLOR} from './smas';
 
-type PillType = 'all' | 'skeleton' | 'trigeminal' | 'organs';
+type PillType = 'all' | 'skeleton' | 'trigeminal' | 'face' | 'organs';
 
 const initial:SceneState={
  explode:0,
@@ -45,7 +54,12 @@ const initial:SceneState={
  nervousOverlay:false,
  nervousSelection:null,
  nervousLayers:DEFAULT_NERVOUS_LAYERS,
- nervousSide:DEFAULT_NERVOUS_SIDE
+ nervousSide:DEFAULT_NERVOUS_SIDE,
+ smasOverlay:false,
+ smasSelection:null,
+ smasLayers:DEFAULT_SMAS_LAYERS,
+ smasSide:DEFAULT_NERVOUS_SIDE,
+ faceMuscleLayers:DEFAULT_FACE_MUSCLE_LAYERS
 };
 
 export default function Home(){
@@ -60,6 +74,105 @@ export default function Home(){
  const [about,setAbout]=useState(false);
  const [query,setQuery]=useState('');
  const [chosen,setChosen]=useState<Concept|null>(null);
+ type AllSnapshot = {
+  visible: SystemId[];
+  nervousLayers: NervousLayers;
+ };
+
+ // Snapshot ref to persist All visibility and layers across pill switching
+ const allSnapshotRef=useRef<AllSnapshot>({
+  visible: DEFAULT_VISIBLE,
+  nervousLayers: DEFAULT_NERVOUS_LAYERS,
+ });
+
+ // Snapshot ref to persist Skeleton visibility across pill switching
+ const skeletonVisibleRef=useRef<SystemId[]>(SKELETON_VISIBLE);
+
+ type TrigeminalSnapshot = {
+  nervousLayers: NervousLayers;
+  nervousSide: NervousSide;
+  visible: SystemId[];
+ };
+
+ // Snapshot ref to persist Trigeminal overlay layers, side, and visibility across pill switching
+ const trigeminalSnapshotRef=useRef<TrigeminalSnapshot>({
+  nervousLayers: DEFAULT_NERVOUS_LAYERS,
+  nervousSide: DEFAULT_NERVOUS_SIDE,
+  visible: TRIGEMINAL_VISIBLE
+ });
+
+ type FaceSnapshot = {
+  smasLayers: SmasLayers;
+  faceMuscleLayers: FaceMuscleLayers;
+  side: NervousSide;
+  visible: SystemId[];
+ };
+
+ // Snapshot ref to persist Face overlay layers, side, and visibility across pill switching
+ const faceSnapshotRef=useRef<FaceSnapshot>({
+  smasLayers: DEFAULT_SMAS_LAYERS,
+  faceMuscleLayers: DEFAULT_FACE_MUSCLE_LAYERS,
+  side: DEFAULT_NERVOUS_SIDE,
+  visible: FACE_VISIBLE
+ });
+
+ // Snapshot ref to persist Organs visibility across pill switching
+ const organsVisibleRef=useRef<SystemId[]>(ORGANS_VISIBLE);
+
+ // Lock state & helper
+ const [locks,setLocks]=useState<Record<string,boolean>>({});
+ const toggleLock=(id:string)=>setLocks(l=>({...l,[id]:!l[id]}));
+ const unlockAll=()=>setLocks({});
+ const lockCount=Object.values(locks).filter(Boolean).length;
+
+ const applyLocks=(s:SceneState,focus:string):SceneState=>{
+  const next={...s};
+  if(focus!=='stock'){
+   next.visible=next.visible.filter(x=>locks[x]);
+  }
+  if(focus!=='trigeminal'){
+   next.nervousLayers={...next.nervousLayers};
+   for(const k of Object.keys(next.nervousLayers)){
+    const key=k as keyof NervousLayers;
+    if(!locks['nervous_'+key] && !(locks['nervous_v3'] && (key==='v3Jaw'||key==='v3Temple'))){
+     (next.nervousLayers as any)[key]=false;
+    }
+   }
+   if(Object.values(next.nervousLayers).every(v=>!v)){
+    next.nervousSelection=null;
+    if(!Object.keys(locks).some(k=>k.startsWith('nervous_')&&locks[k])){
+     next.nervousOverlay=false;
+    }
+   }
+  }
+  if(focus!=='face'){
+   if(next.smasLayers){
+    next.smasLayers={...next.smasLayers};
+    for(const k of Object.keys(next.smasLayers)){
+     const key=k as keyof SmasLayers;
+     if(!locks['smas_'+key] && !(locks['smas_cn7'] && (key==='temporal'||key==='zygomatic'||key==='buccal'||key==='marginal'||key==='cervical'))){
+      (next.smasLayers as any)[key]=false;
+     }
+    }
+    if(Object.values(next.smasLayers).every(v=>!v)){
+     next.smasSelection=null;
+     if(!Object.keys(locks).some(k=>k.startsWith('smas_')&&locks[k])){
+      next.smasOverlay=false;
+     }
+    }
+   }
+   if(next.faceMuscleLayers){
+    next.faceMuscleLayers={...next.faceMuscleLayers};
+    for(const k of Object.keys(next.faceMuscleLayers)){
+     const key=k as keyof FaceMuscleLayers;
+     if(!locks['facemuscle_'+key]){
+      (next.faceMuscleLayers as any)[key]=false;
+     }
+    }
+   }
+  }
+  return next;
+ };
 
  useEffect(()=>{
   const abort=new AbortController();
@@ -103,7 +216,7 @@ export default function Home(){
 
  const choose=(c:Concept)=>{
   setChosen(c);
-  setState(s=>({...s,selected:c.elements,isolate:false,rotate:false,nervousSelection:null}));
+  setState(s=>({...s,selected:c.elements,isolate:false,rotate:false,nervousSelection:null,smasSelection:null}));
   setDetails(true);
   setPanel(null);
  };
@@ -117,13 +230,21 @@ export default function Home(){
   const p=parts.get(id);
   if(!p)return;
   setChosen({id:p.conceptId,name:p.name,elements:[id]});
-  setState(s=>({...s,selected:[id],isolate:false,rotate:false,nervousSelection:null}));
+  setState(s=>({...s,selected:[id],isolate:false,rotate:false,nervousSelection:null,smasSelection:null}));
   setDetails(true);
   setPanel(null);
  };
 
  const chooseNervousSelection=(sel:NervousSelection|null)=>{
-  setState(s=>({...s,nervousSelection:sel,selected:[],isolate:false,rotate:false}));
+  setState(s=>({...s,nervousSelection:sel,smasSelection:null,selected:[],isolate:false,rotate:false}));
+  if(sel){
+   setChosen(null);
+   setDetails(true);
+  }
+ };
+
+ const chooseSmasSelection=(sel:SmasSelection|null)=>{
+  setState(s=>({...s,smasSelection:sel,nervousSelection:null,selected:[],isolate:false,rotate:false}));
   if(sel){
    setChosen(null);
    setDetails(true);
@@ -132,11 +253,47 @@ export default function Home(){
 
  const toggle=(id:SystemId)=>{
   setDetails(false);
-  setState(s=>({...s,selected:[],isolate:false,visible:s.visible.includes(id)?s.visible.filter(x=>x!==id):[...s.visible,id]}));
+  setState(s=>{
+   const nextVisible=s.visible.includes(id)?s.visible.filter(x=>x!==id):[...s.visible,id];
+   if(activePill==='all'){
+    allSnapshotRef.current.visible=nextVisible;
+   }
+   if(activePill==='skeleton'){
+    skeletonVisibleRef.current=nextVisible.filter(x=>SKELETON_SYSTEM_IDS.includes(x));
+   }
+   if(activePill==='trigeminal'){
+    trigeminalSnapshotRef.current.visible=nextVisible;
+   }
+   if(activePill==='face'){
+    faceSnapshotRef.current.visible=nextVisible;
+   }
+   if(activePill==='organs'){
+    organsVisibleRef.current=nextVisible.filter(x=>ORGAN_SYSTEM_IDS.includes(x));
+   }
+   return {...s,selected:[],isolate:false,visible:nextVisible};
+  });
  };
 
  const reset=()=>{
+  allSnapshotRef.current={
+   visible:DEFAULT_VISIBLE,
+   nervousLayers:DEFAULT_NERVOUS_LAYERS,
+  };
+  skeletonVisibleRef.current=SKELETON_VISIBLE;
+  trigeminalSnapshotRef.current={
+   nervousLayers:DEFAULT_NERVOUS_LAYERS,
+   nervousSide:DEFAULT_NERVOUS_SIDE,
+   visible:TRIGEMINAL_VISIBLE
+  };
+  faceSnapshotRef.current={
+   smasLayers:DEFAULT_SMAS_LAYERS,
+   faceMuscleLayers:DEFAULT_FACE_MUSCLE_LAYERS,
+   side:DEFAULT_NERVOUS_SIDE,
+   visible:FACE_VISIBLE
+  };
+  organsVisibleRef.current=ORGANS_VISIBLE;
   setActivePill('all');
+  setLocks({});
   setState(s=>({...initial,visible:DEFAULT_VISIBLE,reset:s.reset+1}));
   setChosen(null);
   setDetails(false);
@@ -149,46 +306,156 @@ export default function Home(){
  };
 
  const patchNervousLayers=(patch:Partial<NervousLayers>)=>{
-  setState(s=>({...s,nervousLayers:{...s.nervousLayers,...patch},nervousSelection:null}));
+  setState(s=>{
+   const nextLayers={...s.nervousLayers,...patch};
+   if(activePill==='all'){
+    allSnapshotRef.current.nervousLayers=nextLayers;
+   }
+   if(activePill==='trigeminal'){
+    trigeminalSnapshotRef.current.nervousLayers=nextLayers;
+   }
+   const anyNervousOn=Object.values(nextLayers).some(Boolean);
+   return {
+    ...s,
+    nervousLayers:nextLayers,
+    nervousOverlay:anyNervousOn,
+    nervousSelection:anyNervousOn?s.nervousSelection:null
+   };
+  });
  };
 
  const setNervousSide=(side:NervousSide)=>{
+  if(activePill==='trigeminal'){
+   trigeminalSnapshotRef.current.nervousSide=side;
+  }
   setState(s=>({...s,nervousSide:side,nervousSelection:null,reset:s.reset+1}));
  };
 
+ const patchSmasLayers=(patch:Partial<SmasLayers>)=>{
+  setState(s=>{
+   const nextLayers={...(s.smasLayers??DEFAULT_SMAS_LAYERS),...patch};
+   if(activePill==='face'){
+    faceSnapshotRef.current.smasLayers=nextLayers;
+   }
+   const anySmasOn=Object.values(nextLayers).some(Boolean);
+   return {
+    ...s,
+    smasLayers:nextLayers,
+    smasOverlay:activePill==='face',
+    smasSelection:anySmasOn?s.smasSelection:null
+   };
+  });
+ };
+
+ const patchFaceMuscleLayers=(patch:Partial<FaceMuscleLayers>)=>{
+  setState(s=>{
+   const nextLayers={...(s.faceMuscleLayers??DEFAULT_FACE_MUSCLE_LAYERS),...patch};
+   if(activePill==='face'){
+    faceSnapshotRef.current.faceMuscleLayers=nextLayers;
+   }
+   return {
+    ...s,
+    faceMuscleLayers:nextLayers
+   };
+  });
+ };
+
+ const setFaceSide=(side:NervousSide)=>{
+  if(activePill==='face'){
+   faceSnapshotRef.current.side=side;
+  }
+  setState(s=>({...s,smasSide:side,smasSelection:null,reset:s.reset+1}));
+ };
+
  const selectPill=(pill:PillType)=>{
+  if(activePill==='all'){
+   allSnapshotRef.current={
+    visible:state.visible,
+    nervousLayers:state.nervousLayers,
+   };
+  }
+  if(activePill==='skeleton'){
+   skeletonVisibleRef.current=state.visible.filter(x=>SKELETON_SYSTEM_IDS.includes(x));
+  }
+  if(activePill==='trigeminal'){
+   trigeminalSnapshotRef.current={
+    nervousLayers:state.nervousLayers,
+    nervousSide:state.nervousSide,
+    visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
+   };
+  }
+  if(activePill==='face'){
+   faceSnapshotRef.current={
+    smasLayers:state.smasLayers??DEFAULT_SMAS_LAYERS,
+    faceMuscleLayers:state.faceMuscleLayers??DEFAULT_FACE_MUSCLE_LAYERS,
+    side:state.smasSide??DEFAULT_NERVOUS_SIDE,
+    visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
+   };
+  }
+  if(activePill==='organs'){
+   organsVisibleRef.current=state.visible.filter(x=>ORGAN_SYSTEM_IDS.includes(x));
+  }
   setActivePill(pill);
   setChosen(null);
   setDetails(false);
+
   if(pill==='all'){
-   setState(s=>({...s,nervousOverlay:true,nervousSelection:null,nervousLayers:DEFAULT_NERVOUS_LAYERS,selected:[],isolate:false,visible:activeSystems.map(x=>x.id)}));
+   setState(s=>{
+    const saved=allSnapshotRef.current;
+    const savedVisible=saved.visible??DEFAULT_VISIBLE;
+    const anyNervousOn=Object.values(saved.nervousLayers).some(Boolean);
+    return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,selected:[],isolate:false,visible:savedVisible};
+   });
   } else if(pill==='skeleton'){
-   setState(s=>({...s,nervousOverlay:false,nervousSelection:null,selected:[],isolate:false,visible:SKELETON_VISIBLE}));
-  } else if(pill==='trigeminal'){
-   setState(s=>({...s,nervousOverlay:true,nervousSelection:null,nervousLayers:DEFAULT_NERVOUS_LAYERS,nervousSide:s.nervousSide||DEFAULT_NERVOUS_SIDE,selected:[],isolate:false,visible:TRIGEMINAL_VISIBLE,view:'three-quarter',reset:s.reset+1}));
-  } else if(pill==='organs'){
-   setState(s=>({...s,nervousOverlay:false,nervousSelection:null,selected:[],isolate:false,visible:ORGANS_VISIBLE}));
-  }
- };
+    setState(s=>{
+     const savedSkeleton=(skeletonVisibleRef.current??SKELETON_VISIBLE).filter(x=>SKELETON_SYSTEM_IDS.includes(x));
+     return {...s,nervousOverlay:false,smasOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedSkeleton};
+    });
+   } else if(pill==='trigeminal'){
+    setState(s=>{
+     const saved=trigeminalSnapshotRef.current;
+     const savedVisible=(saved.visible??TRIGEMINAL_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
+     const anyNervousOn=Object.values(saved.nervousLayers).some(Boolean);
+     return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,nervousSide:saved.nervousSide,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
+    });
+   } else if(pill==='face'){
+    setState(s=>{
+     const saved=faceSnapshotRef.current;
+     const savedVisible=(saved.visible??FACE_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
+     return {...s,smasOverlay:true,nervousOverlay:false,smasSelection:null,nervousSelection:null,smasLayers:saved.smasLayers,smasSide:saved.side,faceMuscleLayers:saved.faceMuscleLayers,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
+    });
+   } else if(pill==='organs'){
+    setState(s=>{
+     const savedOrgans=(organsVisibleRef.current??ORGANS_VISIBLE).filter(x=>ORGAN_SYSTEM_IDS.includes(x));
+     return {...s,nervousOverlay:false,smasOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedOrgans};
+    });
+   }
+  };
 
  const nervousDetail = state.nervousOverlay && state.nervousSelection ? overlayCard(state.nervousSelection) : null;
+ const smasDetail = state.smasOverlay && state.smasSelection ? smasCard(state.smasSelection) : null;
 
  // Filter rows based on active pill
  const showSkeletonRows = activePill === 'all' || activePill === 'skeleton';
  const showTrigeminalRows = activePill === 'all' || activePill === 'trigeminal';
+ const showFaceRows = activePill === 'face';
  const showOrganRows = activePill === 'all' || activePill === 'organs';
 
  // Skeleton group includes skeleton, muscles, connective tissue, body surface
  const skeletonSystems = activeSystems.filter(s=>SKELETON_SYSTEM_IDS.includes(s.id));
+ // Base systems for Trigeminal & Face (Skeleton + Body surface)
+ const trigeminalBaseSystems = activeSystems.filter(s=>TRIGEMINAL_VISIBLE.includes(s.id));
+ const faceBaseSystems = activeSystems.filter(s=>FACE_VISIBLE.includes(s.id));
  // Organ group includes visceral organs, cardiac, vascular, nervous
  const organSystems = activeSystems.filter(s=>ORGAN_SYSTEM_IDS.includes(s.id));
 
  return <main className="studio">
   {atlas&&<AnatomyScene 
    atlas={atlas} 
-   state={{...state,inspectorOpen:details&&(selectedParts.length>0||!!state.nervousSelection)}} 
+   state={{...state,inspectorOpen:details&&(selectedParts.length>0||!!state.nervousSelection||!!state.smasSelection)}} 
    onSelect={choosePart} 
    onNervousSelect={chooseNervousSelection}
+   onSmasSelect={chooseSmasSelection}
    onProgress={n=>{setProgress(n);if(n===100)setError('');}} 
    onError={setError}
   />}
@@ -210,24 +477,34 @@ export default function Home(){
   <section className={`layers-panel glass ${panel==='layers'?'mobile-open':''}`} aria-label="Anatomical layers">
    <div className="panel-heading">
     <span>Systems</span>
-    <Button variant="ghost" className="mobile-only icon-button" onClick={()=>setPanel(null)} aria-label="Close systems"><X size={18}/></Button>
-    <Badge variant="secondary" className="desktop-only small-number">{activeSystems.length}</Badge>
+    <div className="panel-heading-actions">
+     <Button variant="ghost" className="mobile-only icon-button" onClick={()=>setPanel(null)} aria-label="Close systems"><X size={18}/></Button>
+     <Badge variant="secondary" className="desktop-only small-number">{activeSystems.length}</Badge>
+    </div>
    </div>
 
-   {/* Systems pills: All | Skeleton | Trigeminal | Organs */}
+   {/* Systems pills: All | Skeleton | Trigeminal | Face | Organs */}
    <div className="layer-presets">
     <Button variant="ghost" aria-pressed={activePill==='all'} onClick={()=>selectPill('all')}>All</Button>
     <Button variant="ghost" aria-pressed={activePill==='skeleton'} onClick={()=>selectPill('skeleton')}>Skeleton</Button>
     <Button variant="ghost" aria-pressed={activePill==='trigeminal'} onClick={()=>selectPill('trigeminal')}>Trigeminal</Button>
+    <Button variant="ghost" aria-pressed={activePill==='face'} onClick={()=>selectPill('face')}>Face</Button>
     <Button variant="ghost" aria-pressed={activePill==='organs'} onClick={()=>selectPill('organs')}>Organs</Button>
    </div>
 
-   {/* Laterality controls ONLY when Trigeminal pill is active */}
+   {/* Laterality controls for Trigeminal and Face pills */}
    {activePill==='trigeminal' && (
     <div className="side-presets layer-presets">
      <Button variant="ghost" aria-pressed={state.nervousSide==='left'} onClick={()=>setNervousSide('left')}>Left</Button>
      <Button variant="ghost" aria-pressed={state.nervousSide==='right'} onClick={()=>setNervousSide('right')}>Right</Button>
      <Button variant="ghost" aria-pressed={state.nervousSide==='both'} onClick={()=>setNervousSide('both')}>Both</Button>
+    </div>
+   )}
+   {activePill==='face' && (
+    <div className="side-presets layer-presets">
+     <Button variant="ghost" aria-pressed={(state.smasSide??'left')==='left'} onClick={()=>setFaceSide('left')}>Left</Button>
+     <Button variant="ghost" aria-pressed={state.smasSide==='right'} onClick={()=>setFaceSide('right')}>Right</Button>
+     <Button variant="ghost" aria-pressed={state.smasSide==='both'} onClick={()=>setFaceSide('both')}>Both</Button>
     </div>
    )}
 
@@ -238,10 +515,26 @@ export default function Home(){
       {activePill==='all' && <div className="system-column-label">Skeleton & Soft Tissue</div>}
       {skeletonSystems.map(s=>(
        <div className={`system-row ${state.visible.includes(s.id)?'enabled':''}`} key={s.id}>
-        <Button variant="ghost" className="system-name" title={`Show only ${s.name.toLowerCase()}`} onClick={()=>setState(v=>({...v,visible:[s.id],isolate:false,selected:[]}))}>
-         <span className="system-dot" style={{background:s.color}}/>{s.name}<span className="system-count">{counts[s.id]}</span>
+        <Button variant="ghost" className="system-name" title={`Show only ${s.name.toLowerCase()}`} onClick={()=>setState(v=>{
+         const l=applyLocks(v,'stock');
+         const visible=l.visible.filter(x=>locks[x]);
+         if(!visible.includes(s.id))visible.push(s.id);
+         if(activePill==='all'){
+          allSnapshotRef.current.visible=visible;
+         }
+         if(activePill==='skeleton'){
+          skeletonVisibleRef.current=visible.filter(x=>SKELETON_SYSTEM_IDS.includes(x));
+         }
+         return {...l,visible,isolate:false,selected:[]};
+        })}>
+         <span className="system-dot" style={{background:s.color}}/><span className="system-label">{s.name}</span><span className="system-count">{counts[s.id]}</span>
         </Button>
-        <Switch checked={state.visible.includes(s.id)} onCheckedChange={()=>toggle(s.id)} aria-label={`Show ${s.name.toLowerCase()}`} />
+        <div className="system-actions">
+         <Switch checked={state.visible.includes(s.id)} onCheckedChange={()=>toggle(s.id)} aria-label={`Show ${s.name.toLowerCase()}`} />
+         <Button variant="ghost" className={`lock-btn ${locks[s.id]?'locked':''}`} onClick={()=>toggleLock(s.id)} aria-label={locks[s.id]?'Unlock':'Lock'} title={locks[s.id]?'Unlock row':'Lock row'}>
+          {locks[s.id]?<Lock size={13}/>:<Unlock size={13}/>}
+         </Button>
+        </div>
        </div>
       ))}
      </div>
@@ -252,52 +545,248 @@ export default function Home(){
      <div className="overlay-layers" aria-label="Trigeminal overlay layers">
       {activePill==='all' && <div className="system-column-label">Trigeminal (CN V)</div>}
       
+      {/* Base systems for Trigeminal: Skeleton & Body surface */}
+      {activePill==='trigeminal' && trigeminalBaseSystems.map(s=>(
+       <div className={`system-row ${state.visible.includes(s.id)?'enabled':''}`} key={s.id}>
+        <Button variant="ghost" className="system-name" title={`Show only ${s.name.toLowerCase()}`} onClick={()=>setState(v=>{
+         const l=applyLocks(v,'trigeminal');
+         const visible=l.visible.filter(x=>locks[x]);
+         if(!visible.includes(s.id))visible.push(s.id);
+         if(activePill==='trigeminal'){
+          trigeminalSnapshotRef.current.visible=visible;
+         }
+         return {...l,visible,isolate:false,selected:[]};
+        })}>
+         <span className="system-dot" style={{background:s.color}}/><span className="system-label">{s.name}</span><span className="system-count">{counts[s.id]}</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.visible.includes(s.id)} onCheckedChange={()=>toggle(s.id)} aria-label={`Show ${s.name.toLowerCase()}`} />
+         <Button variant="ghost" className={`lock-btn ${locks[s.id]?'locked':''}`} onClick={()=>toggleLock(s.id)} aria-label={locks[s.id]?'Unlock':'Lock'} title={locks[s.id]?'Unlock row':'Lock row'}>
+          {locks[s.id]?<Lock size={13}/>:<Unlock size={13}/>}
+         </Button>
+        </div>
+       </div>
+      ))}
+
       {/* CN V */}
       <div className={`system-row ${state.nervousLayers.cnv?'enabled':''}`}>
        <Button variant="ghost" className="system-name" title="Show or hide the yellow trigeminal tree" onClick={()=>patchNervousLayers({cnv:!state.nervousLayers.cnv})}>
-        <span className="system-dot" style={{background:'#e6c445'}}/>CN V<span className="layer-sub">yellow nerves</span>
+        <span className="system-dot" style={{background:'#e6c445'}}/><span className="system-label">CN V</span><span className="layer-sub">yellow nerves</span>
        </Button>
-       <Switch checked={state.nervousLayers.cnv} onCheckedChange={on=>patchNervousLayers({cnv:on})} aria-label="Show trigeminal nerve" />
+       <div className="system-actions">
+        <Switch checked={state.nervousLayers.cnv} onCheckedChange={on=>patchNervousLayers({cnv:on})} aria-label="Show trigeminal nerve" />
+        <Button variant="ghost" className={`lock-btn ${locks['nervous_cnv']?'locked':''}`} onClick={()=>toggleLock('nervous_cnv')} aria-label={locks['nervous_cnv']?'Unlock':'Lock'} title={locks['nervous_cnv']?'Unlock row':'Lock row'}>
+         {locks['nervous_cnv']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
       </div>
 
       {/* V1 */}
       <div className={`system-row ${state.nervousLayers.v1?'enabled':''}`}>
        <Button variant="ghost" className="system-name" title="Study ophthalmic V1 (forehead & eye)" onClick={()=>patchNervousLayers({v1:!state.nervousLayers.v1})}>
-        <span className="system-dot" style={{background:'#2aa8b8'}}/>V1<span className="layer-sub">forehead & eye</span>
+        <span className="system-dot" style={{background:'#2aa8b8'}}/><span className="system-label">V1</span><span className="layer-sub">forehead & eye</span>
        </Button>
-       <Switch checked={state.nervousLayers.v1} onCheckedChange={on=>patchNervousLayers({v1:on})} aria-label="Show ophthalmic V1" />
+       <div className="system-actions">
+        <Switch checked={state.nervousLayers.v1} onCheckedChange={on=>patchNervousLayers({v1:on})} aria-label="Show ophthalmic V1" />
+        <Button variant="ghost" className={`lock-btn ${locks['nervous_v1']?'locked':''}`} onClick={()=>toggleLock('nervous_v1')} aria-label={locks['nervous_v1']?'Unlock':'Lock'} title={locks['nervous_v1']?'Unlock row':'Lock row'}>
+         {locks['nervous_v1']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
       </div>
 
       {/* V2 */}
       <div className={`system-row ${state.nervousLayers.v2?'enabled':''}`}>
        <Button variant="ghost" className="system-name" title="Study maxillary V2 (cheek & upper lip)" onClick={()=>patchNervousLayers({v2:!state.nervousLayers.v2})}>
-        <span className="system-dot" style={{background:'#3daf6a'}}/>V2<span className="layer-sub">cheek & upper lip</span>
+        <span className="system-dot" style={{background:'#3daf6a'}}/><span className="system-label">V2</span><span className="layer-sub">cheek & upper lip</span>
        </Button>
-       <Switch checked={state.nervousLayers.v2} onCheckedChange={on=>patchNervousLayers({v2:on})} aria-label="Show maxillary V2" />
+       <div className="system-actions">
+        <Switch checked={state.nervousLayers.v2} onCheckedChange={on=>patchNervousLayers({v2:on})} aria-label="Show maxillary V2" />
+        <Button variant="ghost" className={`lock-btn ${locks['nervous_v2']?'locked':''}`} onClick={()=>toggleLock('nervous_v2')} aria-label={locks['nervous_v2']?'Unlock':'Lock'} title={locks['nervous_v2']?'Unlock row':'Lock row'}>
+         {locks['nervous_v2']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
       </div>
 
       {/* V3 */}
       <div className={`system-row ${state.nervousLayers.v3Jaw||state.nervousLayers.v3Temple?'enabled':''}`}>
        <Button variant="ghost" className="system-name" title="Study mandibular V3" onClick={()=>patchNervousLayers({v3Jaw:!(state.nervousLayers.v3Jaw||state.nervousLayers.v3Temple),v3Temple:!(state.nervousLayers.v3Jaw||state.nervousLayers.v3Temple)})}>
-        <span className="system-dot" style={{background:'#8a5bb8'}}/>V3<span className="layer-sub">two skin areas</span>
+        <span className="system-dot" style={{background:'#8a5bb8'}}/><span className="system-label">V3</span><span className="layer-sub">two skin areas</span>
        </Button>
-       <Switch checked={state.nervousLayers.v3Jaw||state.nervousLayers.v3Temple} onCheckedChange={on=>patchNervousLayers({v3Jaw:on,v3Temple:on})} aria-label="Show mandibular V3" />
+       <div className="system-actions">
+        <Switch checked={state.nervousLayers.v3Jaw||state.nervousLayers.v3Temple} onCheckedChange={on=>patchNervousLayers({v3Jaw:on,v3Temple:on})} aria-label="Show mandibular V3" />
+        <Button variant="ghost" className={`lock-btn ${locks['nervous_v3']?'locked':''}`} onClick={()=>toggleLock('nervous_v3')} aria-label={locks['nervous_v3']?'Unlock':'Lock'} title={locks['nervous_v3']?'Unlock row':'Lock row'}>
+         {locks['nervous_v3']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
       </div>
 
       {/* Indented Jaw & chin */}
       <div className={`system-row overlay-child ${state.nervousLayers.v3Jaw?'enabled':''}`}>
        <Button variant="ghost" className="system-name" title="Lower face: jaw, chin, lower lip" onClick={()=>patchNervousLayers({v3Jaw:!state.nervousLayers.v3Jaw})}>
-        <span className="system-dot" style={{background:'#8a5bb8'}}/>Jaw & chin
+        <span className="system-dot" style={{background:'#8a5bb8'}}/><span className="system-label">Jaw & chin</span>
        </Button>
-       <Switch checked={state.nervousLayers.v3Jaw} onCheckedChange={on=>patchNervousLayers({v3Jaw:on})} aria-label="Show V3 jaw and chin" />
+       <div className="system-actions">
+        <Switch checked={state.nervousLayers.v3Jaw} onCheckedChange={on=>patchNervousLayers({v3Jaw:on})} aria-label="Show V3 jaw and chin" />
+        <Button variant="ghost" className={`lock-btn ${locks['nervous_v3Jaw']?'locked':''}`} onClick={()=>toggleLock('nervous_v3Jaw')} aria-label={locks['nervous_v3Jaw']?'Unlock':'Lock'} title={locks['nervous_v3Jaw']?'Unlock row':'Lock row'}>
+         {locks['nervous_v3Jaw']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
       </div>
 
       {/* Indented Temple & ear */}
       <div className={`system-row overlay-child ${state.nervousLayers.v3Temple?'enabled':''}`}>
        <Button variant="ghost" className="system-name" title="Side of head: temple & ear" onClick={()=>patchNervousLayers({v3Temple:!state.nervousLayers.v3Temple})}>
-        <span className="system-dot" style={{background:'#9b6cc9'}}/>Temple & ear
+        <span className="system-dot" style={{background:'#9b6cc9'}}/><span className="system-label">Temple & ear</span>
        </Button>
-       <Switch checked={state.nervousLayers.v3Temple} onCheckedChange={on=>patchNervousLayers({v3Temple:on})} aria-label="Show V3 temple and ear" />
+       <div className="system-actions">
+        <Switch checked={state.nervousLayers.v3Temple} onCheckedChange={on=>patchNervousLayers({v3Temple:on})} aria-label="Show V3 temple and ear" />
+        <Button variant="ghost" className={`lock-btn ${locks['nervous_v3Temple']?'locked':''}`} onClick={()=>toggleLock('nervous_v3Temple')} aria-label={locks['nervous_v3Temple']?'Unlock':'Lock'} title={locks['nervous_v3Temple']?'Unlock row':'Lock row'}>
+         {locks['nervous_v3Temple']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
+      </div>
+     </div>
+    )}
+
+    {/* Face rows (Muscles + Soft tissue) */}
+    {showFaceRows && (
+     <div className="overlay-layers" aria-label="Face layers">
+      {/* Base systems for Face: Skeleton & Body surface */}
+      {faceBaseSystems.map(s=>(
+       <div className={`system-row ${state.visible.includes(s.id)?'enabled':''}`} key={s.id}>
+        <Button variant="ghost" className="system-name" title={`Show only ${s.name.toLowerCase()}`} onClick={()=>setState(v=>{
+         const l=applyLocks(v,'face');
+         const visible=l.visible.filter(x=>locks[x]);
+         if(!visible.includes(s.id))visible.push(s.id);
+         if(activePill==='face'){
+          faceSnapshotRef.current.visible=visible;
+         }
+         return {...l,visible,isolate:false,selected:[]};
+        })}>
+         <span className="system-dot" style={{background:s.color}}/><span className="system-label">{s.name}</span><span className="system-count">{counts[s.id]}</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.visible.includes(s.id)} onCheckedChange={()=>toggle(s.id)} aria-label={`Show ${s.name.toLowerCase()}`} />
+         <Button variant="ghost" className={`lock-btn ${locks[s.id]?'locked':''}`} onClick={()=>toggleLock(s.id)} aria-label={locks[s.id]?'Unlock':'Lock'} title={locks[s.id]?'Unlock row':'Lock row'}>
+          {locks[s.id]?<Lock size={13}/>:<Unlock size={13}/>}
+         </Button>
+        </div>
+       </div>
+      ))}
+
+      {/* Subsection: Muscles */}
+      <div className="system-column-label">Muscles</div>
+      {FACE_MUSCLE_ROWS.map(m=>(
+       <div className={`system-row ${(state.faceMuscleLayers?.[m.id]??true)?'enabled':''}`} key={m.id}>
+        <Button variant="ghost" className="system-name" title={m.description} onClick={()=>patchFaceMuscleLayers({[m.id]:!(state.faceMuscleLayers?.[m.id]??true)})}>
+         <span className="system-dot" style={{background:m.color}}/><span className="system-label">{m.label}</span><span className="layer-sub">{m.sub}</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.faceMuscleLayers?.[m.id]??true} onCheckedChange={on=>patchFaceMuscleLayers({[m.id]:on})} aria-label={`Show ${m.label} muscle`} />
+         <Button variant="ghost" className={`lock-btn ${locks['facemuscle_'+m.id]?'locked':''}`} onClick={()=>toggleLock('facemuscle_'+m.id)} aria-label={locks['facemuscle_'+m.id]?'Unlock':'Lock'} title={locks['facemuscle_'+m.id]?'Unlock row':'Lock row'}>
+          {locks['facemuscle_'+m.id]?<Lock size={13}/>:<Unlock size={13}/>}
+         </Button>
+        </div>
+       </div>
+      ))}
+
+      {/* Subsection: Soft tissue */}
+      <div className="system-column-label">Soft tissue</div>
+      
+      {/* SMAS */}
+      <div className={`system-row ${state.smasLayers?.smas?'enabled':''}`}>
+       <Button variant="ghost" className="system-name" title="Superficial musculoaponeurotic system fascia" onClick={()=>patchSmasLayers({smas:!state.smasLayers?.smas})}>
+        <span className="system-dot" style={{background:SMAS_COLOR}}/><span className="system-label">SMAS</span><span className="layer-sub">fascia</span>
+       </Button>
+       <div className="system-actions">
+        <Switch checked={state.smasLayers?.smas??true} onCheckedChange={on=>patchSmasLayers({smas:on})} aria-label="Show SMAS fascia" />
+        <Button variant="ghost" className={`lock-btn ${locks['smas_smas']?'locked':''}`} onClick={()=>toggleLock('smas_smas')} aria-label={locks['smas_smas']?'Unlock':'Lock'} title={locks['smas_smas']?'Unlock row':'Lock row'}>
+         {locks['smas_smas']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
+      </div>
+
+      {/* Buccal fat pad */}
+      <div className={`system-row ${state.smasLayers?.fat?'enabled':''}`}>
+       <Button variant="ghost" className="system-name" title="Buccal and cheek fat pads" onClick={()=>patchSmasLayers({fat:!state.smasLayers?.fat})}>
+        <span className="system-dot" style={{background:FAT_COLOR}}/><span className="system-label">Fat pad</span><span className="layer-sub">buccal pad</span>
+       </Button>
+       <div className="system-actions">
+        <Switch checked={state.smasLayers?.fat??true} onCheckedChange={on=>patchSmasLayers({fat:on})} aria-label="Show fat pad" />
+        <Button variant="ghost" className={`lock-btn ${locks['smas_fat']?'locked':''}`} onClick={()=>toggleLock('smas_fat')} aria-label={locks['smas_fat']?'Unlock':'Lock'} title={locks['smas_fat']?'Unlock row':'Lock row'}>
+         {locks['smas_fat']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
+      </div>
+
+      {/* Facial nerve (CN VII) parent row */}
+      {(() => {
+       const cn7Active = !!(state.smasLayers?.temporal || state.smasLayers?.zygomatic || state.smasLayers?.buccal || state.smasLayers?.marginal || state.smasLayers?.cervical);
+       return (
+        <div className={`system-row ${cn7Active?'enabled':''}`}>
+         <Button variant="ghost" className="system-name" title="Study facial nerve (CN VII) motor branches" onClick={()=>patchSmasLayers({temporal:!cn7Active,zygomatic:!cn7Active,buccal:!cn7Active,marginal:!cn7Active,cervical:!cn7Active})}>
+          <span className="system-dot" style={{background:FACIAL_NERVE_COLOR}}/><span className="system-label">CN VII</span><span className="layer-sub">motor branches</span>
+         </Button>
+         <div className="system-actions">
+          <Switch checked={cn7Active} onCheckedChange={on=>patchSmasLayers({temporal:on,zygomatic:on,buccal:on,marginal:on,cervical:on})} aria-label="Show facial nerve" />
+          <Button variant="ghost" className={`lock-btn ${locks['smas_cn7']?'locked':''}`} onClick={()=>toggleLock('smas_cn7')} aria-label={locks['smas_cn7']?'Unlock':'Lock'} title={locks['smas_cn7']?'Unlock row':'Lock row'}>
+           {locks['smas_cn7']?<Lock size={13}/>:<Unlock size={13}/>}
+          </Button>
+         </div>
+        </div>
+       );
+      })()}
+
+      {/* CN VII branch child rows */}
+      {FACIAL_NERVE_ROWS.map(n=>(
+       <div className={`system-row overlay-child ${state.smasLayers?.[n.id]?'enabled':''}`} key={n.id}>
+        <Button variant="ghost" className="system-name" title={`CN VII ${n.label.toLowerCase()} branch (${n.sub})`} onClick={()=>patchSmasLayers({[n.id]:!state.smasLayers?.[n.id]})}>
+         <span className="system-dot" style={{background:FACIAL_NERVE_COLOR}}/><span className="system-label">{n.label}</span><span className="layer-sub">{n.sub}</span>
+        </Button>
+        <div className="system-actions">
+         <Switch checked={state.smasLayers?.[n.id]??true} onCheckedChange={on=>patchSmasLayers({[n.id]:on})} aria-label={`Show ${n.label} branch`} />
+         <Button variant="ghost" className={`lock-btn ${locks['smas_'+n.id]?'locked':''}`} onClick={()=>toggleLock('smas_'+n.id)} aria-label={locks['smas_'+n.id]?'Unlock':'Lock'} title={locks['smas_'+n.id]?'Unlock row':'Lock row'}>
+          {locks['smas_'+n.id]?<Lock size={13}/>:<Unlock size={13}/>}
+         </Button>
+        </div>
+       </div>
+      ))}
+
+      {/* Deep tissues: Parotid, Lymph, Periosteum */}
+      <div className={`system-row ${state.smasLayers?.parotid?'enabled':''}`}>
+       <Button variant="ghost" className="system-name" title="Parotid salivary gland" onClick={()=>patchSmasLayers({parotid:!state.smasLayers?.parotid})}>
+        <span className="system-dot" style={{background:PAROTID_COLOR}}/><span className="system-label">Parotid</span><span className="layer-sub">gland</span>
+       </Button>
+       <div className="system-actions">
+        <Switch checked={state.smasLayers?.parotid??true} onCheckedChange={on=>patchSmasLayers({parotid:on})} aria-label="Show parotid gland" />
+        <Button variant="ghost" className={`lock-btn ${locks['smas_parotid']?'locked':''}`} onClick={()=>toggleLock('smas_parotid')} aria-label={locks['smas_parotid']?'Unlock':'Lock'} title={locks['smas_parotid']?'Unlock row':'Lock row'}>
+         {locks['smas_parotid']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
+      </div>
+
+      <div className={`system-row ${state.smasLayers?.lymph?'enabled':''}`}>
+       <Button variant="ghost" className="system-name" title="Facial and neck lymph nodes" onClick={()=>patchSmasLayers({lymph:!state.smasLayers?.lymph})}>
+        <span className="system-dot" style={{background:LYMPH_COLOR}}/><span className="system-label">Lymph nodes</span><span className="layer-sub">face & neck</span>
+       </Button>
+       <div className="system-actions">
+        <Switch checked={state.smasLayers?.lymph??true} onCheckedChange={on=>patchSmasLayers({lymph:on})} aria-label="Show lymph nodes" />
+        <Button variant="ghost" className={`lock-btn ${locks['smas_lymph']?'locked':''}`} onClick={()=>toggleLock('smas_lymph')} aria-label={locks['smas_lymph']?'Unlock':'Lock'} title={locks['smas_lymph']?'Unlock row':'Lock row'}>
+         {locks['smas_lymph']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
+      </div>
+
+      <div className={`system-row ${state.smasLayers?.periosteum?'enabled':''}`}>
+       <Button variant="ghost" className="system-name" title="Periosteum fibrous film over bone" onClick={()=>patchSmasLayers({periosteum:!state.smasLayers?.periosteum})}>
+        <span className="system-dot" style={{background:PERIOSTEUM_COLOR}}/><span className="system-label">Periosteum</span><span className="layer-sub">on bone</span>
+       </Button>
+       <div className="system-actions">
+        <Switch checked={state.smasLayers?.periosteum??true} onCheckedChange={on=>patchSmasLayers({periosteum:on})} aria-label="Show periosteum" />
+        <Button variant="ghost" className={`lock-btn ${locks['smas_periosteum']?'locked':''}`} onClick={()=>toggleLock('smas_periosteum')} aria-label={locks['smas_periosteum']?'Unlock':'Lock'} title={locks['smas_periosteum']?'Unlock row':'Lock row'}>
+         {locks['smas_periosteum']?<Lock size={13}/>:<Unlock size={13}/>}
+        </Button>
+       </div>
       </div>
      </div>
     )}
@@ -308,10 +797,26 @@ export default function Home(){
       {activePill==='all' && <div className="system-column-label">Organs & viscera</div>}
       {organSystems.map(s=>(
        <div className={`system-row ${state.visible.includes(s.id)?'enabled':''}`} key={s.id}>
-        <Button variant="ghost" className="system-name" title={`Show only ${s.name.toLowerCase()}`} onClick={()=>setState(v=>({...v,visible:[s.id],isolate:false,selected:[]}))}>
-         <span className="system-dot" style={{background:s.color}}/>{s.name}<span className="system-count">{counts[s.id]}</span>
+        <Button variant="ghost" className="system-name" title={`Show only ${s.name.toLowerCase()}`} onClick={()=>setState(v=>{
+         const l=applyLocks(v,'stock');
+         const visible=l.visible.filter(x=>locks[x]);
+         if(!visible.includes(s.id))visible.push(s.id);
+         if(activePill==='all'){
+          allSnapshotRef.current.visible=visible;
+         }
+         if(activePill==='organs'){
+          organsVisibleRef.current=visible.filter(x=>ORGAN_SYSTEM_IDS.includes(x));
+         }
+         return {...l,visible,isolate:false,selected:[]};
+        })}>
+         <span className="system-dot" style={{background:s.color}}/><span className="system-label">{s.name}</span><span className="system-count">{counts[s.id]}</span>
         </Button>
-        <Switch checked={state.visible.includes(s.id)} onCheckedChange={()=>toggle(s.id)} aria-label={`Show ${s.name.toLowerCase()}`} />
+        <div className="system-actions">
+         <Switch checked={state.visible.includes(s.id)} onCheckedChange={()=>toggle(s.id)} aria-label={`Show ${s.name.toLowerCase()}`} />
+         <Button variant="ghost" className={`lock-btn ${locks[s.id]?'locked':''}`} onClick={()=>toggleLock(s.id)} aria-label={locks[s.id]?'Unlock':'Lock'} title={locks[s.id]?'Unlock row':'Lock row'}>
+          {locks[s.id]?<Lock size={13}/>:<Unlock size={13}/>}
+         </Button>
+        </div>
        </div>
       ))}
      </div>
@@ -320,7 +825,37 @@ export default function Home(){
 
    <div className="panel-foot">
     <span>{visibleCount.toLocaleString()} pieces visible</span>
-    <Button variant="ghost" onClick={()=>setState(s=>({...s,visible:[],selected:[],isolate:false,nervousOverlay:false}))}>Hide all</Button>
+    {lockCount > 0 ? (
+     <Button variant="ghost" className="unlock-all-btn" onClick={unlockAll}>Unlock all ({lockCount})</Button>
+     ) : (
+      <Button variant="ghost" onClick={()=>{
+       if(activePill==='all'){
+        allSnapshotRef.current.visible=[];
+        allSnapshotRef.current.nervousLayers={
+         cnv:false,v1:false,v2:false,v3Jaw:false,v3Temple:false
+        };
+       }
+       if(activePill==='skeleton'){
+        skeletonVisibleRef.current=[];
+       }
+       if(activePill==='trigeminal'){
+        trigeminalSnapshotRef.current.visible=[];
+       }
+       if(activePill==='face'){
+        faceSnapshotRef.current.visible=[];
+        faceSnapshotRef.current.smasLayers={
+         smas:false,fat:false,temporal:false,zygomatic:false,buccal:false,marginal:false,cervical:false,parotid:false,lymph:false,periosteum:false
+        };
+        faceSnapshotRef.current.faceMuscleLayers={
+         masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false
+        };
+       }
+       if(activePill==='organs'){
+        organsVisibleRef.current=[];
+       }
+       setState(s=>({...s,visible:[],selected:[],isolate:false,nervousOverlay:false,smasOverlay:false,faceMuscleLayers:{masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false}}));
+      }}>Hide all</Button>
+     )}
    </div>
   </section>
 
@@ -346,7 +881,7 @@ export default function Home(){
 
   <div className="scene-caption">
    <span className="caption-line"/>
-   <span>{state.nervousOverlay&&activePill==='trigeminal'?'TRIGEMINAL NERVE (CN V) · TEACHING OVERLAY':state.isolate?(chosen?.name??'SELECTED STRUCTURE'):state.explode>.95?'ANATOMICAL INVENTORY':state.explode>.05?'SEPARATED STRUCTURES':'ADULT HUMAN · MALE'}</span>
+   <span>{state.smasOverlay&&activePill==='face'?'FACIAL SOFT TISSUE & MUSCLES · TEACHING OVERLAY':state.nervousOverlay&&activePill==='trigeminal'?'TRIGEMINAL NERVE (CN V) · TEACHING OVERLAY':state.isolate?(chosen?.name??'SELECTED STRUCTURE'):state.explode>.95?'ANATOMICAL INVENTORY':state.explode>.05?'SEPARATED STRUCTURES':'ADULT HUMAN · MALE'}</span>
    <span className="caption-line"/>
   </div>
 
@@ -370,10 +905,25 @@ export default function Home(){
   {progress<100&&!error&&<div className="loading glass" role="status"><Activity size={18}/><div><strong>Preparing the anatomy</strong><span>{progress}% · Loading {atlas?.parts.length.toLocaleString()??'2,234'} pieces</span><div className="loading-track"><i style={{width:`${progress}%`}}/></div></div></div>}
   {error&&<div className="loading glass error" role="alert"><p>{error}</p><Button variant="ghost" onClick={()=>location.reload()}>Reload viewer</Button></div>}
 
-  {/* Detail Inspector Sheet for Mesh or Trigeminal Element */}
-  <Sheet open={details&&(selectedParts.length>0||!!nervousDetail)} modal={false} disablePointerDismissal onOpenChange={setDetails}>
+  {/* Detail Inspector Sheet for Mesh, Trigeminal, or SMAS Element */}
+  <Sheet open={details&&(selectedParts.length>0||!!nervousDetail||!!smasDetail)} modal={false} disablePointerDismissal onOpenChange={setDetails}>
    <SheetContent initialFocus={detailTitle} className={`detail-sheet glass ${state.isolate?'is-isolated':''}`} showCloseButton={true}>
-    {nervousDetail ? (
+    {smasDetail ? (
+     <>
+      <div className="detail-header">
+       <div className="detail-accent" style={{background:smasDetail.accent}}/>
+       <div className="eyebrow">{smasDetail.eyebrow} · {smasDetail.face}</div>
+       <SheetTitle ref={detailTitle} tabIndex={-1} className="structure-title">{smasDetail.title}</SheetTitle>
+      </div>
+      <div className="detail-scroll">
+       <SheetDescription className="structure-description">{smasDetail.blurb}</SheetDescription>
+       <span className="context-note">Teaching overlay · Facial soft tissue layers</span>
+      </div>
+      <div className="detail-actions">
+       <Button variant="ghost" className="secondary-action" onClick={()=>{setState(s=>({...s,smasSelection:null}));setDetails(false);}}>Close</Button>
+      </div>
+     </>
+    ) : nervousDetail ? (
      <>
       <div className="detail-header">
        <div className="detail-accent" style={{background:nervousDetail.accent}}/>

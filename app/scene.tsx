@@ -6,15 +6,19 @@ import {mergeGeometries} from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {createExplosionLayout} from './explosion-layout';
 import {decodeModelResponse} from './model-download';
 import {PointerTap} from './pointer-tap';
-import {SYSTEMS,type Atlas,type SceneState,type NervousSelection} from './anatomy';
+import {SYSTEMS,type Atlas,type SceneState,type NervousSelection,type SmasSelection} from './anatomy';
 import {TRIGEMINAL_DATA} from './trigeminal-data';
 import {mirrorTrigeminal,partEnabled,type OverlayPartId} from './trigeminal';
 import {mountTrigeminalOverlay,type OverlayHandle} from './nervous-scene';
+import {mountSmasOverlay,type SmasHandle} from './smas-scene';
+import {mirrorSmas,smasHoverLabel,type SmasData} from './smas';
+import {mountFaceMusclesOverlay,type FaceMusclesHandle} from './face-muscles-scene';
+import {FACE_MUSCLES_DATA,mirrorFaceMuscles} from './face-muscles';
 
-interface Props {atlas:Atlas;state:SceneState;onSelect:(id:string)=>void;onNervousSelect?:(sel:NervousSelection|null)=>void;onProgress:(n:number)=>void;onError:(s:string)=>void}
-export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onProgress,onError}:Props){
- const host=useRef<HTMLDivElement>(null),latest=useRef(state),select=useRef(onSelect),nervousSelect=useRef(onNervousSelect);
- latest.current=state;select.current=onSelect;nervousSelect.current=onNervousSelect;
+interface Props {atlas:Atlas;state:SceneState;onSelect:(id:string)=>void;onNervousSelect?:(sel:NervousSelection|null)=>void;onSmasSelect?:(sel:SmasSelection|null)=>void;onProgress:(n:number)=>void;onError:(s:string)=>void}
+export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSmasSelect,onProgress,onError}:Props){
+ const host=useRef<HTMLDivElement>(null),latest=useRef(state),select=useRef(onSelect),nervousSelect=useRef(onNervousSelect),smasSelect=useRef(onSmasSelect);
+ latest.current=state;select.current=onSelect;nervousSelect.current=onNervousSelect;smasSelect.current=onSmasSelect;
  useEffect(()=>{
   const el=host.current!;let disposed=false,frame=0,dirty=true,ready=false,lastView='',lastReset=-1,lastIsolate='',layoutKey='',amount=0;
   let lastState:SceneState|null=null;
@@ -46,7 +50,7 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
   const labels=document.createElement('div');labels.className='nerve-labels';labels.hidden=true;el.appendChild(labels);
   const projectedLabel=new T.Vector3();
 
-  // Root group for trigeminal overlay
+  // Root group for trigeminal and smas overlays
   const overlayGroup=new T.Group();
   scene.add(overlayGroup);
 
@@ -55,12 +59,35 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
   const leftHandle:OverlayHandle=mountTrigeminalOverlay(overlayGroup,leftOverlayData,'left');
   const rightHandle:OverlayHandle=mountTrigeminalOverlay(overlayGroup,rightOverlayData,'right');
 
+  const faceMusclesLeft:FaceMusclesHandle=mountFaceMusclesOverlay(overlayGroup,FACE_MUSCLES_DATA,'left');
+  const faceMusclesRight:FaceMusclesHandle=mountFaceMusclesOverlay(overlayGroup,mirrorFaceMuscles(FACE_MUSCLES_DATA),'right');
+
+  let smasLeft:SmasHandle|null=null,smasRight:SmasHandle|null=null;
+  fetch('/models/smas.json',{signal:abort.signal})
+   .then(r=>{if(!r.ok)return;return r.json();})
+   .then(data=>{
+    if(disposed||!data)return;
+    const smasData=data as SmasData;
+    smasLeft=mountSmasOverlay(overlayGroup,smasData,'left');
+    smasRight=mountSmasOverlay(overlayGroup,mirrorSmas(smasData),'right');
+    dirty=true;
+   })
+   .catch(()=>{});
+
   const getActiveOverlays=()=>{
    const side=latest.current.nervousSide||'left';
    if(!latest.current.nervousOverlay)return [];
    if(side==='both')return [leftHandle,rightHandle];
    if(side==='right')return [rightHandle];
    return [leftHandle];
+  };
+
+  const getActiveSmasOverlays=()=>{
+   const side=latest.current.smasSide||'left';
+   if(!latest.current.smasOverlay)return [];
+   if(side==='both')return [smasLeft,smasRight].filter((o):o is SmasHandle=>!!o);
+   if(side==='right')return smasRight?[smasRight]:[];
+   return smasLeft?[smasLeft]:[];
   };
 
   type Target={index:number;x:number;y:number;left:number;right:number;top:number;bottom:number};let targets:Target[]=[];
@@ -71,7 +98,7 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
    return best;
   };
 
-  const isSubtleSystem=(system:string)=>latest.current.nervousOverlay&&(system==='skeletal'||system==='integumentary');
+  const isSubtleSystem=(system:string)=>(latest.current.nervousOverlay||latest.current.smasOverlay)&&(system==='skeletal'||system==='integumentary');
 
   const materialFor=(system:string)=>{
    const isSkin=system==='integumentary';
@@ -116,15 +143,15 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
    const reservedHeight=mobile?350:270;const availableAspect=Math.max(.35,(el.clientWidth-(mobile?40:340))/Math.max(160,el.clientHeight-reservedHeight));const atlasDistance=Math.max(packingHeight,packingWidth/availableAspect)/(2*Math.tan(T.MathUtils.degToRad(camera.fov/2)))*(el.clientHeight/Math.max(160,el.clientHeight-reservedHeight))*1.08;
    let distance=T.MathUtils.lerp(normalDistance,Math.max(.2,atlasDistance),extent);if(extent>.8)view='front';
    
-   // If trigeminal overlay is active and not exploding, focus on the head region
-   if(latest.current.nervousOverlay&&extent<.1){
-    const face=latest.current.nervousSide||'left';
-    const trigeminalDirection=face==='right'?new T.Vector3(-.45,.1,1).normalize():new T.Vector3(.45,.1,1).normalize();
-    const trigeminalTarget=new T.Vector3(0,1.60,0.03);
-    const trigeminalDistance=mobile?0.48:0.38;
-    controls.target.copy(trigeminalTarget);
-    const dir=view==='front'?new T.Vector3(0,.02,1):view==='side'?(face==='right'?new T.Vector3(-1,.02,0):new T.Vector3(1,.02,0)):view==='back'?new T.Vector3(0,.02,-1):trigeminalDirection;
-    camera.position.copy(trigeminalTarget).addScaledVector(dir,trigeminalDistance);
+   // If trigeminal or smas overlay is active and not exploding, focus on the head region
+   if((latest.current.nervousOverlay||latest.current.smasOverlay)&&extent<.1){
+    const face=latest.current.smasOverlay?(latest.current.smasSide||'left'):(latest.current.nervousSide||'left');
+    const headDirection=face==='right'?new T.Vector3(-.45,.1,1).normalize():new T.Vector3(.45,.1,1).normalize();
+    const headTarget=new T.Vector3(0,1.60,0.03);
+    const headDistance=mobile?0.48:0.38;
+    controls.target.copy(headTarget);
+    const dir=view==='front'?new T.Vector3(0,.02,1):view==='side'?(face==='right'?new T.Vector3(-1,.02,0):new T.Vector3(1,.02,0)):view==='back'?new T.Vector3(0,.02,-1):headDirection;
+    camera.position.copy(headTarget).addScaledVector(dir,headDistance);
     controls.update();dirty=true;return;
    }
 
@@ -163,6 +190,25 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
   const down=(e:PointerEvent)=>{hover.hidden=true;tap.down(e.pointerId,e.clientX,e.clientY,e.pointerType==='touch'?12:5);};
   const move=(e:PointerEvent)=>{tap.move(e.pointerId,e.clientX,e.clientY);if(e.buttons||e.pointerType==='touch'){hover.hidden=true;return;}
    const rect=el.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top;
+   if(latest.current.smasOverlay&&amount<.2){
+    const live=getActiveSmasOverlays();
+    if(live.length){
+     pointer.set(x/rect.width*2-1,-(y/rect.height)*2+1);
+     raycaster.setFromCamera(pointer,camera);
+     const hit=raycaster.intersectObjects(live.flatMap(o=>o.pickables.filter(p=>p.visible)),true)[0];
+     if(hit){
+      let rec:SmasSelection|null=null;
+      for(const o of live){rec=o.resolve(hit.object);if(rec)break;}
+      hover.hidden=!rec;renderer.domElement.style.cursor=rec?'pointer':'grab';
+      if(rec){
+       hover.textContent=smasHoverLabel(rec);
+       hover.style.left=`${Math.max(8,Math.min(x+14,el.clientWidth-260))}px`;
+       hover.style.top=`${Math.max(8,Math.min(y+18,el.clientHeight-55))}px`;
+      }
+      return;
+     }
+    }
+   }
    if(latest.current.nervousOverlay&&amount<.2){
     const live=getActiveOverlays();
     if(live.length){
@@ -186,6 +232,15 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
   const cancel=(e:PointerEvent)=>tap.cancel(e.pointerId);
   const up=(e:PointerEvent)=>{
    const validTap=tap.up(e.pointerId,e.clientX,e.clientY);if(!validTap||!ready)return;const rect=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);raycaster.setFromCamera(pointer,camera);
+   const smasLive=getActiveSmasOverlays();
+   if(latest.current.smasOverlay&&amount<.2&&smasLive.length){
+    const hits=raycaster.intersectObjects(smasLive.flatMap(o=>o.pickables.filter(p=>p.visible)),true);
+    if(hits[0]){
+     let rec:SmasSelection|null=null;
+     for(const o of smasLive){rec=o.resolve(hits[0].object);if(rec)break;}
+     if(rec){hover.hidden=true;smasSelect.current?.(rec);return;}
+    }
+   }
    const nervousLive=getActiveOverlays();
    if(latest.current.nervousOverlay&&amount<.2&&nervousLive.length){
     const hits=raycaster.intersectObjects(nervousLive.flatMap(o=>o.pickables.filter(p=>p.visible)),true);
@@ -203,13 +258,14 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
   const clock=new T.Clock();let lastExtent=-1;
   const animate=()=>{
    if(disposed)return;frame=requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05),s=latest.current;
-   const changed=lastState?.visible!==s.visible||lastState?.selected!==s.selected||lastState?.isolate!==s.isolate||lastState?.nervousOverlay!==s.nervousOverlay||lastState?.nervousLayers!==s.nervousLayers||lastState?.nervousSide!==s.nervousSide||lastState?.nervousSelection!==s.nervousSelection;
+   const changed=lastState?.visible!==s.visible||lastState?.selected!==s.selected||lastState?.isolate!==s.isolate||lastState?.nervousOverlay!==s.nervousOverlay||lastState?.nervousLayers!==s.nervousLayers||lastState?.nervousSide!==s.nervousSide||lastState?.nervousSelection!==s.nervousSelection||lastState?.smasOverlay!==s.smasOverlay||lastState?.smasLayers!==s.smasLayers||lastState?.smasSide!==s.smasSide||lastState?.smasSelection!==s.smasSelection||lastState?.faceMuscleLayers!==s.faceMuscleLayers;
    const moving=Math.abs(amount-s.explode)>.0001;
    if(moving){amount=T.MathUtils.damp(amount,s.explode,8,dt);dirty=true;}
    
    // Sync trigeminal overlay visibility & layers
    const side=s.nervousSide||'left';
-   const overlayOn=s.nervousOverlay&&amount<.2;
+   const anyNervousOn=s.nervousLayers?Object.values(s.nervousLayers).some(Boolean):false;
+   const overlayOn=s.nervousOverlay&&anyNervousOn&&amount<.2;
    leftHandle.setVisible(overlayOn&&(side==='left'||side==='both'));
    rightHandle.setVisible(overlayOn&&(side==='right'||side==='both'));
    leftHandle.setLayers(s.nervousLayers);
@@ -217,15 +273,40 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
    leftHandle.setSelection(s.nervousSelection);
    rightHandle.setSelection(s.nervousSelection);
 
-   // Adjust material opacity for subtle skeletal + skin rendering in trigeminal mode
+   // Sync smas overlay visibility & layers
+   const smasSide=s.smasSide||'left';
+   const anySmasOn=s.smasLayers?Object.values(s.smasLayers).some(Boolean):false;
+   const smasOverlayOn=s.smasOverlay&&anySmasOn&&amount<.2;
+   if(smasLeft){
+    smasLeft.setVisible(!!(smasOverlayOn&&(smasSide==='left'||smasSide==='both')));
+    if(s.smasLayers)smasLeft.setLayers(s.smasLayers);
+    smasLeft.setSelection(s.smasSelection??null);
+   }
+   if(smasRight){
+    smasRight.setVisible(!!(smasOverlayOn&&(smasSide==='right'||smasSide==='both')));
+    if(s.smasLayers)smasRight.setLayers(s.smasLayers);
+    smasRight.setSelection(s.smasSelection??null);
+   }
+
+   // Sync face muscles overlay visibility & layers
+   const anyFaceMuscleOn=s.faceMuscleLayers?Object.values(s.faceMuscleLayers).some(Boolean):false;
+   const faceMusclesOverlayOn=!!s.smasOverlay&&anyFaceMuscleOn&&amount<.2;
+   faceMusclesLeft.setVisible(!!(faceMusclesOverlayOn&&(smasSide==='left'||smasSide==='both')));
+   faceMusclesRight.setVisible(!!(faceMusclesOverlayOn&&(smasSide==='right'||smasSide==='both')));
+   if(s.faceMuscleLayers){
+    faceMusclesLeft.setLayers(s.faceMuscleLayers);
+    faceMusclesRight.setLayers(s.faceMuscleLayers);
+   }
+
+   // Adjust material opacity for subtle skeletal + skin rendering in trigeminal / face mode
    const skelMat=mats.get('skeletal');
    if(skelMat instanceof T.MeshStandardMaterial){
-    const targetOpacity=s.nervousOverlay?0.42:1.0;
-    if(skelMat.opacity!==targetOpacity){skelMat.opacity=targetOpacity;skelMat.transparent=s.nervousOverlay;skelMat.needsUpdate=true;dirty=true;}
+    const targetOpacity=(s.nervousOverlay||s.smasOverlay)?0.42:1.0;
+    if(skelMat.opacity!==targetOpacity){skelMat.opacity=targetOpacity;skelMat.transparent=!!(s.nervousOverlay||s.smasOverlay);skelMat.needsUpdate=true;dirty=true;}
    }
    const skinMat=mats.get('integumentary');
    if(skinMat instanceof T.MeshStandardMaterial){
-    const targetOpacity=s.nervousOverlay?0.18:0.1;
+    const targetOpacity=(s.nervousOverlay||s.smasOverlay)?0.18:0.1;
     if(skinMat.opacity!==targetOpacity){skinMat.opacity=targetOpacity;skinMat.needsUpdate=true;dirty=true;}
    }
 
@@ -258,7 +339,7 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onPro
 
   };animate();
   const contextLost=(e:Event)=>{e.preventDefault();onError('The 3D session was paused by your device. Reload to continue.');};renderer.domElement.addEventListener('webglcontextlost',contextLost);
-  return()=>{disposed=true;abort.abort();cancelAnimationFrame(frame);observer.disconnect();controls.dispose();leftHandle.dispose();rightHandle.dispose();geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());scene.traverse(o=>{if(o instanceof T.Mesh&&!geometries.includes(o.geometry)){o.geometry.dispose();const ms=Array.isArray(o.material)?o.material:[o.material];ms.forEach(m=>m.dispose());}});env.dispose();partTexture.dispose();selectionTexture.dispose();markerGeometry.dispose();markerMaterial.dispose();hover.remove();labels.remove();renderer.dispose();renderer.domElement.remove();};
+  return()=>{disposed=true;abort.abort();cancelAnimationFrame(frame);observer.disconnect();controls.dispose();leftHandle.dispose();rightHandle.dispose();smasLeft?.dispose();smasRight?.dispose();faceMusclesLeft.dispose();faceMusclesRight.dispose();geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());scene.traverse(o=>{if(o instanceof T.Mesh&&!geometries.includes(o.geometry)){o.geometry.dispose();const ms=Array.isArray(o.material)?o.material:[o.material];ms.forEach(m=>m.dispose());}});env.dispose();partTexture.dispose();selectionTexture.dispose();markerGeometry.dispose();markerMaterial.dispose();hover.remove();labels.remove();renderer.dispose();renderer.domElement.remove();};
  },[atlas]);
  return <div className="scene" ref={host}/>;
 }

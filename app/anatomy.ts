@@ -27,6 +27,24 @@ export interface NervousLayers {cnv:boolean;v1:boolean;v2:boolean;v3Jaw:boolean;
 export const DEFAULT_NERVOUS_LAYERS:NervousLayers={cnv:true,v1:true,v2:true,v3Jaw:true,v3Temple:true};
 export const DEFAULT_NERVOUS_SIDE:NervousSide='left';
 
+export type SoftTissueId='smas'|'fat'|'temporal'|'zygomatic'|'buccal'|'marginal'|'cervical'|'parotid'|'lymph'|'periosteum';
+export type FacialNerveId='temporal'|'zygomatic'|'buccal'|'marginal'|'cervical';
+export type SmasSelection={kind:SoftTissueId;id:string;side?:'left'|'right'};
+export interface SmasLayers {smas:boolean;fat:boolean;temporal:boolean;zygomatic:boolean;buccal:boolean;marginal:boolean;cervical:boolean;parotid:boolean;lymph:boolean;periosteum:boolean}
+export const DEFAULT_SMAS_LAYERS:SmasLayers={smas:true,fat:true,temporal:true,zygomatic:true,buccal:true,marginal:true,cervical:true,parotid:true,lymph:true,periosteum:true};
+
+export type FaceMuscleId='masseter'|'temporalis'|'buccinator'|'orbicularis'|'zygomaticus'|'pterygoids';
+export interface FaceMuscleLayers {masseter:boolean;temporalis:boolean;buccinator:boolean;orbicularis:boolean;zygomaticus:boolean;pterygoids:boolean}
+export const DEFAULT_FACE_MUSCLE_LAYERS:FaceMuscleLayers={masseter:true,temporalis:true,buccinator:true,orbicularis:true,zygomaticus:true,pterygoids:true};
+export const FACE_MUSCLE_ROWS:{id:FaceMuscleId;label:string;sub:string;color:string;description:string}[]=[
+ {id:'masseter',label:'Masseter',sub:'jaw elevation',color:'#b56b60',description:'Powerful muscle of mastication connecting the zygomatic arch to the angle and ramus of the mandible. Elevates the jaw to close the mouth.'},
+ {id:'temporalis',label:'Temporalis',sub:'temple to mandible',color:'#a85b50',description:'Broad fan-shaped muscle in the temporal fossa extending to the coronoid process of the mandible. Elevates and retracts the jaw.'},
+ {id:'buccinator',label:'Buccinator',sub:'cheek wall',color:'#c27165',description:'Forms the muscular wall of the cheek. Compresses the cheek against teeth during chewing and aids blowing.'},
+ {id:'orbicularis',label:'Orbicularis',sub:'eye & mouth sphincters',color:'#bf6a64',description:'Circular sphincter muscles around the eye orbit (oculi) and lips (oris) that close the eyelids and purse the mouth.'},
+ {id:'zygomaticus',label:'Zygomaticus',sub:'cheek to mouth corner',color:'#cb7c72',description:'Major and minor muscles extending from the zygomatic bone to the corner of the mouth, elevating the angle of the mouth during smiling.'},
+ {id:'pterygoids',label:'Pterygoids',sub:'deep jaw & grinding',color:'#a35248',description:'Deep masticatory muscles on the sphenoid pterygoid plates. Medial elevates the jaw; lateral opens and protrudes the jaw with side-to-side grinding.'},
+];
+
 export interface SceneState {
  inspectorOpen?:boolean;
  explode:number;
@@ -40,6 +58,11 @@ export interface SceneState {
  nervousSelection:NervousSelection|null;
  nervousLayers:NervousLayers;
  nervousSide:NervousSide;
+ smasOverlay?:boolean;
+ smasSelection?:SmasSelection|null;
+ smasLayers?:SmasLayers;
+ smasSide?:NervousSide;
+ faceMuscleLayers?:FaceMuscleLayers;
 }
 
 export const SKELETON_SYSTEM_IDS:SystemId[] = ['skeletal','muscular','connective','integumentary'];
@@ -49,6 +72,7 @@ export const DEFAULT_VISIBLE:SystemId[] = ['cardiac','sensory','skeletal','muscu
 export const SKELETON_VISIBLE:SystemId[] = ['skeletal','connective'];
 export const ORGANS_VISIBLE:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','reproductive','sensory','arterial','venous','lymphatic'];
 export const TRIGEMINAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
+export const FACE_VISIBLE:SystemId[] = ['skeletal','integumentary'];
 
 export const EXPLANATIONS:Record<string,string> = {
  'heart':'A muscular pump in the chest. Its right side sends blood to the lungs; its left side sends blood through the systemic circulation.',
