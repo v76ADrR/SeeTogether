@@ -1,13 +1,13 @@
 import {flushSync} from 'react-dom';
 import {registerAtlasTools} from './agent-tools';
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {Activity,ArrowUpRight,Bone,ChevronRight,Focus,HeartPulse,Info,Layers3,Lock,Pause,RotateCcw,RotateCw,ScanFace,Unlock,X,Zap} from 'lucide-react';
+import {Activity,ArrowUpRight,Bone,ChevronRight,Focus,HeartPulse,Info,Layers3,Lock,Pause,RotateCcw,RotateCw,ScanFace,Search,Unlock,X,Zap} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
 import {Slider} from '@/components/ui/slider';
 import {Switch} from '@/components/ui/switch';
 import {Sheet,SheetContent,SheetTitle,SheetDescription} from '@/components/ui/sheet';
-
+import {Combobox,ComboboxInput,ComboboxContent,ComboboxList,ComboboxItem,ComboboxEmpty} from '@/components/ui/combobox';
 import AnatomyScene from './scene';
 import {
  DEFAULT_VISIBLE,
@@ -33,7 +33,6 @@ import {
  isJaw,
  isDentalStructure,
  partMatchesDental,
- scrubAtlas,
  type Atlas,
  type Concept,
  type SceneState,
@@ -88,9 +87,10 @@ export default function Home(){
  const [state,setState]=useState<SceneState>(initial);
  const [progress,setProgress]=useState(0);
  const [error,setError]=useState('');
- const [panel,setPanel]=useState<'layers'|null>(null);
+ const [panel,setPanel]=useState<'layers'|'search'|null>(null);
  const [details,setDetails]=useState(false);
  const [about,setAbout]=useState(false);
+ const [query,setQuery]=useState('');
  const [chosen,setChosen]=useState<Concept|null>(null);
  type AllSnapshot = {
   visible: SystemId[];
@@ -231,11 +231,22 @@ export default function Home(){
   setState({...initial,visible:DEFAULT_VISIBLE});
   fetch('/models/atlas.json',{signal:abort.signal})
    .then(r=>{if(!r.ok)throw new Error('The anatomy catalogue could not be loaded.');return r.json();})
-   .then(data=>setAtlas(scrubAtlas(data as Atlas)))
+   .then(data=>setAtlas(data as Atlas))
    .catch(e=>{if(e.name!=='AbortError')setError(e.message);});
   return()=>abort.abort();
  },[]);
 
+ useEffect(()=>{
+  const key=(e:KeyboardEvent)=>{
+   if(e.key==='/'&&!(e.target instanceof HTMLInputElement)&&!(e.target instanceof HTMLTextAreaElement)){
+    e.preventDefault();
+    setPanel('search');
+    setDetails(false);
+   }
+  };
+  window.addEventListener('keydown',key);
+  return()=>window.removeEventListener('keydown',key);
+ },[]);
 
  const parts=useMemo(()=>new Map(atlas?.parts.map(p=>[p.id,p])),[atlas]);
  const counts=useMemo(()=>Object.fromEntries(SYSTEMS.map(s=>[s.id,atlas?.parts.filter(p=>p.system===s.id).length??0])),[atlas]);
@@ -250,7 +261,12 @@ export default function Home(){
   return state.visible.includes(p.system);
  }).length??0;
  
-
+ const results=useMemo(()=>{
+  if(!atlas)return[];
+  const term=query.toLowerCase().trim();
+  if(!term)return ['heart','brain','liver','stomach','spleen','pancreas','urinary bladder','trachea'].map(name=>atlas.concepts.find(c=>c.name.toLowerCase()===name)).filter((x):x is Concept=>!!x);
+  return atlas.concepts.filter(c=>c.name.toLowerCase().includes(term)||c.id.toLowerCase().includes(term)).sort((a,b)=>a.name.length-b.name.length).slice(0,80);
+ },[atlas,query]);
 
  const choose=(c:Concept)=>{
   setChosen(c);
@@ -346,7 +362,7 @@ export default function Home(){
   setPanel(null);
  };
 
- const openPanel=(next:'layers')=>{
+ const openPanel=(next:'layers'|'search')=>{
   setDetails(false);
   setPanel(p=>p===next?null:next);
  };
@@ -545,10 +561,14 @@ export default function Home(){
   />}
   <div className="vignette"/>
   <header className="identity">
-   <div className="eyebrow"><span className="status-dot"/> History of patient</div>
-   <h1>Radiology Reports</h1>
+   <div className="eyebrow"><span className="status-dot"/> INTERACTIVE ANATOMY</div>
+   <h1>Human Atlas<Badge variant="outline" className="edition">3D</Badge></h1>
+   <div className="identity-meta">{atlas?atlas.parts.length.toLocaleString():'2,234'} modeled pieces <span>·</span> BodyParts3D</div>
   </header>
   <nav className="top-actions" aria-label="Explorer panels">
+   <Button variant="ghost" className={panel==='search'?'active':''} onClick={()=>openPanel('search')} aria-label="Search anatomy">
+    <Search size={18}/><span>Find a structure</span><kbd>/</kbd>
+   </Button>
    <Button variant="ghost" className="icon-button" aria-label="About this atlas" onClick={()=>{setDetails(false);setPanel(null);setAbout(true);}}>
     <Info size={18}/>
    </Button>
@@ -1137,6 +1157,11 @@ export default function Home(){
    </div>
   </section>
 
+  {panel==='search'&&<section className="search-panel glass" aria-label="Find anatomy">
+   <div className="panel-heading"><span>Find a structure</span><Button variant="ghost" className="icon-button" onClick={()=>setPanel(null)} aria-label="Close search"><X size={18}/></Button></div>
+   <Combobox<Concept> items={results} value={null} onValueChange={value=>{if(value)choose(value);}} inputValue={query} onInputValueChange={setQuery} itemToStringLabel={c=>c.name} filter={null} open onOpenChange={open=>{if(!open)setPanel(null);}}><ComboboxInput autoFocus placeholder="Heart, femur, cranial nerve…" aria-label="Search named anatomical structures" showTrigger={false}/><ComboboxContent className="anatomy-search-results"><ComboboxEmpty>No structures match your search.</ComboboxEmpty><ComboboxList>{(c:Concept)=><ComboboxItem key={c.id} value={c}><span className="search-result-name">{c.name}</span><span className="small-number">{c.elements.length} {c.elements.length===1?'piece':'pieces'}</span></ComboboxItem>}</ComboboxList></ComboboxContent></Combobox>
+   <p className="search-note">{query?'Showing up to 80 matches. Refine your search to find smaller structures.':'Start with a major organ, or search every named structure.'}</p>
+  </section>}
 
   <nav className="view-controls glass" aria-label="Camera controls">
    {(['three-quarter','front','side','back'] as View[]).map((v,i)=>(
@@ -1245,8 +1270,19 @@ export default function Home(){
 
   <Sheet open={about} onOpenChange={setAbout}>
    <SheetContent className="about-sheet glass">
-    <SheetTitle className="sr-only">About</SheetTitle>
-    <SheetDescription className="sr-only">About this atlas.</SheetDescription>
+    <div className="eyebrow">SOURCE & SCOPE</div>
+    <SheetTitle className="structure-title">A body, revealed.</SheetTitle>
+    <SheetDescription>Explore the adult male reference anatomy from BodyParts3D.</SheetDescription>
+    <div className="about-copy">
+     <p><strong>Male · BodyParts3D</strong><br/>2,234 individual meshes and 3,432 named concepts from an adult male reference anatomy.</p>
+     <p>This reference does not contain every human structure or variation. Named concepts can contain multiple pieces; each source mesh is rendered once.</p>
+     <p>Colors and system groupings are designed for exploration. The geometry is simplified for the web, and short explanations provide general educational context. This is an educational reference, not a diagnostic or surgical tool.</p>
+     <h3>Source</h3>
+     <p>BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International.</p>
+     <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/lic.html" target="_blank" rel="noreferrer">Dataset license <ArrowUpRight size={14}/></a>
+     <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/download.html" target="_blank" rel="noreferrer">Original geometry & metadata <ArrowUpRight size={14}/></a>
+     <a href="https://academic.oup.com/nar/article/37/suppl_1/D782/1000752" target="_blank" rel="noreferrer">Read the source publication <ArrowUpRight size={14}/></a>
+    </div>
    </SheetContent>
   </Sheet>
  </main>;

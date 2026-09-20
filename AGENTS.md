@@ -47,7 +47,6 @@ These regional Systems parts are frozen at the **current good stage** (UI, funct
 - Detail card adaptive height: frozen. Do not hardcode a height or minimum height that can spill into or cover the orbit hint.
 - **Future options:** you may **add** new systems/rows/pills when the user asks. You may adjust UI only as needed to fit **new** options (spacing, scroll, adaptive card). You must **not** break, reshape, or regress existing frozen pills’ UI, functioning, or logic. Warn and wait before any change that touches frozen behavior.
 - Large or structural UI changes to existing frozen Systems cards require warn-and-wait. Small UI-only polish is OK only when the task is clearly UI-only and does not alter frozen behavior.
-- **Systems UI freeze (strong):** The current Systems UI (pill bar / icons, cards, rows, toggles, locks, Dental colors, adaptive height) is considered **good**. Some logic may still be imperfect, but agents **must not** change, restyle, redesign, or “improve” the UI while fixing logic or adding features — unless the user explicitly asks for a UI change in the current conversation after a warning. Prefer logic-only fixes that leave the UI looking the same.
 
 ### Project base (do not get confused)
 
