@@ -6,7 +6,7 @@ import {mergeGeometries} from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {createExplosionLayout} from './explosion-layout';
 import {decodeModelResponse} from './model-download';
 import {PointerTap} from './pointer-tap';
-import {SYSTEMS,type Atlas,type SceneState,type NervousSelection,type SmasSelection,isDentalStructure,isTooth,getToothQuadrant,partMatchesDental,DEFAULT_DENTAL_LAYERS} from './anatomy';
+import {SYSTEMS,type Atlas,type SceneState,type NervousSelection,type SmasSelection,isDentalStructure,isTooth,getToothQuadrant,partMatchesDental,DEFAULT_DENTAL_LAYERS,isSuppressedAnatomy} from './anatomy';
 import {TRIGEMINAL_DATA} from './trigeminal-data';
 import {mirrorTrigeminal,partEnabled,type OverlayPartId} from './trigeminal';
 import {mountTrigeminalOverlay,type OverlayHandle} from './nervous-scene';
@@ -130,13 +130,29 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
    const groups=new Map<string,T.BufferGeometry[]>();
    atlas.parts.forEach((p,i)=>{
     if(p.chunk!==ci)return;
+    // Skip male reproductive meshes: SYSTEMS no longer includes reproductive, so
+    // mats.get('reproductive') is undefined and Three.js would draw them always.
+    // if(isSuppressedAnatomy(p))return;
+    // FIX 1a: in atlas.parts.forEach grouping by p.system, add active early continue: if (p.system === 'reproductive') return;
+    // (SYSTEMS excludes reproductive, so mats.get('reproductive') is undefined; Three.js would draw them with default material lacking partVisible shader)
+    if (p.system === 'reproductive') return;
+    // Optional: skip parts whose name contains "penis" (penis vessels under arterial/venous)
+    if (p.name.toLowerCase().includes('penis')) return;
+    // FIX 2: mute Body surface/Skin silhouette the same skip way so it doesn't read genital
+    if (p.system === 'integumentary' || p.name === 'Skin') return;
     const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(new Float32Array(buffer,p.positions,p.vertexCount*3),3));
     g.setAttribute('normal',new T.BufferAttribute(new Int16Array(buffer,p.normals,p.vertexCount*3),3,true));g.setIndex(new T.BufferAttribute(new Uint32Array(buffer,p.indices,p.indexCount),1));
     g.boundingBox=bounds[i].clone();g.computeBoundingSphere();const pick=new T.Mesh(g);pick.matrixAutoUpdate=false;pickers[i]=pick;geometries.push(g);
     g.setAttribute('partIndex',new T.BufferAttribute(new Float32Array(p.vertexCount).fill(i),1));
     const list=groups.get(p.system)??[];list.push(g);groups.set(p.system,list);
    });
-   groups.forEach((gs,system)=>{const geometry=mergeGeometries(gs,false);if(!geometry)throw new Error('Could not assemble anatomy geometry.');geometries.push(geometry);const mesh=new T.Mesh(geometry,mats.get(system as never));mesh.frustumCulled=false;scene.add(mesh);});
+   groups.forEach((gs,system)=>{
+    const mat=mats.get(system as never);
+    // FIX 1b: in groups.forEach mesh creation, if no mat for system, return instead of adding a default-material mesh
+    // (Three.js would otherwise instantiate the mesh with a default material lacking custom shader uniforms, causing it to ignore visibility toggles)
+    if(!mat)return;
+    const geometry=mergeGeometries(gs,false);if(!geometry)throw new Error('Could not assemble anatomy geometry.');geometries.push(geometry);const mesh=new T.Mesh(geometry,mat);mesh.frustumCulled=false;scene.add(mesh);
+   });
    lastState=null;loaded++;onProgress(Math.round(loaded/atlas.chunks.length*100));dirty=true;
   };
   (async()=>{try{let cursor=0;await Promise.all(Array.from({length:3},async()=>{while(cursor<atlas.chunks.length){const i=cursor++;await loadChunk(i);}}));if(!disposed){ready=true;dirty=true;}}catch(e){if(!disposed)onError(e instanceof Error?e.message:'Could not load the anatomy.');}})();
@@ -327,6 +343,7 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
    if(changed||moving||lastExtent<0){
     const visible=new Set(s.visible),selection=new Set(s.selected);
     const visibleParts=atlas.parts.filter(p=>{
+     if(isSuppressedAnatomy(p))return false;
      if(s.isolate)return selection.has(p.id);
      if(selection.has(p.id))return true;
      if(s.dentalOverlay&&isDentalStructure(p)){
@@ -343,7 +360,8 @@ export default function AnatomyScene({atlas,state,onSelect,onNervousSelect,onSma
      else {const t=(amount-.45)/.55,group=SYSTEMS.findIndex(sys=>sys.id===p.system),angle=group/SYSTEMS.length*Math.PI*2;dx=T.MathUtils.lerp(Math.sin(angle)*.48,destination.x-c.x,t);dy=T.MathUtils.lerp((c.y-.85)*.28,destination.y-c.y,t);dz=T.MathUtils.lerp(Math.cos(angle)*.48,-c.z,t);}
      const selected=selection.has(p.id);
      let isPartVisible=false;
-     if(s.isolate){isPartVisible=selected;}
+     if(isSuppressedAnatomy(p)){isPartVisible=false;}
+     else if(s.isolate){isPartVisible=selected;}
      else if(selected){isPartVisible=true;}
      else if(s.dentalOverlay&&isDentalStructure(p)){
       isPartVisible=partMatchesDental(p,s.dentalLayers??DEFAULT_DENTAL_LAYERS,s.dentalSide??'both');

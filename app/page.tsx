@@ -1,6 +1,6 @@
 import {flushSync} from 'react-dom';
 import {registerAtlasTools} from './agent-tools';
-import {useEffect,useMemo,useRef,useState} from 'react';
+import {lazy,Suspense,useEffect,useMemo,useRef,useState} from 'react';
 import {Activity,ArrowUpRight,Bone,ChevronRight,Focus,HeartPulse,Info,Layers3,Lock,Pause,RotateCcw,RotateCw,ScanFace,Search,Unlock,X,Zap} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
@@ -45,10 +45,14 @@ import {
  type SmasSelection,
  type FaceMuscleLayers,
  type FaceMuscleId,
- type DentalLayers
+ type DentalLayers,
+ isSuppressedAnatomy
 } from './anatomy';
 import {overlayCard} from './trigeminal';
 import {FACIAL_NERVE_ROWS,DEEP_TISSUE_ROWS,smasCard,SMAS_COLOR,FAT_COLOR,FACIAL_NERVE_COLOR,PAROTID_COLOR,LYMPH_COLOR,PERIOSTEUM_COLOR} from './smas';
+import {UploadSession,type SessionFile,type SessionFileCategory,inferCategory} from './upload-session';
+
+const DicomViewer = lazy(() => import('./dicom-viewer'));
 
 const ToothIcon = ({ size = 15 }: { size?: number }) => (
  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -92,6 +96,24 @@ export default function Home(){
  const [about,setAbout]=useState(false);
  const [query,setQuery]=useState('');
  const [chosen,setChosen]=useState<Concept|null>(null);
+ const [viewMode,setViewMode]=useState<'anatomy'|'imaging'>('anatomy');
+ const [sessionFiles,setSessionFiles]=useState<SessionFile[]>([]);
+
+ const handleAddSessionFiles=(newFiles:File[],targetCat?:SessionFileCategory)=>{
+  const items:SessionFile[]=newFiles.map(f=>({
+   id:`file-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+   name:f.name,
+   category:targetCat||inferCategory(f.name,f.type),
+   size:f.size,
+   type:f.type,
+   file:f,
+   addedAt:Date.now(),
+  }));
+  setSessionFiles(prev=>[...prev,...items]);
+ };
+ const handleRemoveSessionFile=(id:string)=>setSessionFiles(prev=>prev.filter(f=>f.id!==id));
+ const handleChangeCategory=(id:string,category:SessionFileCategory)=>setSessionFiles(prev=>prev.map(f=>f.id===id?{...f,category}:f));
+ const handleClearSessionFiles=()=>setSessionFiles([]);
  type AllSnapshot = {
   visible: SystemId[];
   nervousLayers: NervousLayers;
@@ -156,12 +178,23 @@ export default function Home(){
  const unlockAll=()=>setLocks({});
  const lockCount=Object.values(locks).filter(Boolean).length;
 
+const ALL_FALSE_NERVOUS: NervousLayers = { cnv: false, v1: false, v2: false, v3Jaw: false, v3Temple: false };
+const ALL_FALSE_SMAS: SmasLayers = { smas: false, fat: false, temporal: false, zygomatic: false, buccal: false, marginal: false, cervical: false, parotid: false, lymph: false, periosteum: false };
+const ALL_FALSE_FACE_MUSCLES: FaceMuscleLayers = { masseter: false, temporalis: false, buccinator: false, orbicularis: false, zygomaticus: false, pterygoids: false };
+const ALL_FALSE_DENTAL: DentalLayers = { upperJaw: false, lowerJaw: false, teeth: false, q1: false, q2: false, q3: false, q4: false, incisor: false, canine: false, premolar: false, molar: false };
+
  const lockAllCurrent = () => {
   setLocks(prev => {
    const next = { ...prev };
-   if (activePill === 'all') {
-    activeSystems.forEach(s => { next[s.id] = true; });
-   } else if (activePill === 'skeleton') {
+    if (activePill === 'all') {
+     // FIX B: when activePill === 'all', lock only the system rows shown on All Systems (activeSystems / system-id locks)
+     // Do not lock nervous_* / smas_* / facemuscle_* / dental_* from the All Systems button; those stay for their own pills' Lock all.
+     activeSystems.forEach(s => { next[s.id] = true; });
+     // ['cnv', 'v1', 'v2', 'v3', 'v3Jaw', 'v3Temple'].forEach(k => { next['nervous_' + k] = true; });
+     // ['smas', 'fat', 'temporal', 'zygomatic', 'buccal', 'marginal', 'cervical', 'parotid', 'lymph', 'periosteum'].forEach(k => { next['smas_' + k] = true; });
+     // ['masseter', 'temporalis', 'buccinator', 'orbicularis', 'zygomaticus', 'pterygoids'].forEach(k => { next['facemuscle_' + k] = true; });
+     // ['upperJaw', 'lowerJaw', 'teeth', 'q1', 'q2', 'q3', 'q4', 'incisor', 'canine', 'premolar', 'molar'].forEach(k => { next['dental_' + k] = true; });
+    } else if (activePill === 'skeleton') {
     skeletonSystems.forEach(s => { next[s.id] = true; });
    } else if (activePill === 'trigeminal') {
     trigeminalBaseSystems.forEach(s => { next[s.id] = true; });
@@ -277,6 +310,7 @@ export default function Home(){
  const activeSystems=SYSTEMS.filter(s=>counts[s.id]>0);
  const selectedParts=state.selected.map(id=>parts.get(id)).filter(p=>!!p),selected=selectedParts[0],system=SYSTEMS.find(s=>s.id===selected?.system);
  const visibleCount=atlas?.parts.filter(p=>{
+  if(isSuppressedAnatomy(p))return false;
   if(state.isolate)return state.selected.includes(p.id);
   if(state.selected.includes(p.id))return true;
   if(state.dentalOverlay&&isDentalStructure(p)){
@@ -284,12 +318,17 @@ export default function Home(){
   }
   return state.visible.includes(p.system);
  }).length??0;
- 
+
  const results=useMemo(()=>{
   if(!atlas)return[];
   const term=query.toLowerCase().trim();
   if(!term)return ['heart','brain','liver','stomach','spleen','pancreas','urinary bladder','trachea'].map(name=>atlas.concepts.find(c=>c.name.toLowerCase()===name)).filter((x):x is Concept=>!!x);
-  return atlas.concepts.filter(c=>c.name.toLowerCase().includes(term)||c.id.toLowerCase().includes(term)).sort((a,b)=>a.name.length-b.name.length).slice(0,80);
+  return atlas.concepts.filter(c=>{
+   if(!(c.name.toLowerCase().includes(term)||c.id.toLowerCase().includes(term)))return false;
+   const elems=c.elements.map(id=>atlas.parts.find(p=>p.id===id)).filter((x):x is NonNullable<typeof x>=>!!x);
+   if(elems.length&&elems.every(isSuppressedAnatomy))return false;
+   return true;
+  }).sort((a,b)=>a.name.length-b.name.length).slice(0,80);
  },[atlas,query]);
 
  const choose=(c:Concept)=>{
@@ -417,141 +456,249 @@ export default function Home(){
   setState(s=>({...s,nervousSide:side,nervousSelection:null,reset:s.reset+1}));
  };
 
- const patchSmasLayers=(patch:Partial<SmasLayers>)=>{
-  setState(s=>{
-   const nextLayers={...(s.smasLayers??DEFAULT_SMAS_LAYERS),...patch};
-   if(activePill==='face'){
-    faceSnapshotRef.current.smasLayers=nextLayers;
-   }
-   const anySmasOn=Object.values(nextLayers).some(Boolean);
-   return {
-    ...s,
-    smasLayers:nextLayers,
-    smasOverlay:activePill==='face',
-    smasSelection:anySmasOn?s.smasSelection:null
+  // FIX A: Commented out clearAllSnapshots() to avoid wiping snapshots across all pills on 'Hide all'
+  /*
+  const clearAllSnapshots = () => {
+   allSnapshotRef.current = {
+    visible: [],
+    nervousLayers: ALL_FALSE_NERVOUS,
    };
-  });
- };
+   skeletonVisibleRef.current = [];
+   trigeminalSnapshotRef.current = {
+    nervousLayers: ALL_FALSE_NERVOUS,
+    nervousSide: DEFAULT_NERVOUS_SIDE,
+    visible: [],
+   };
+   faceSnapshotRef.current = {
+    smasLayers: ALL_FALSE_SMAS,
+    faceMuscleLayers: ALL_FALSE_FACE_MUSCLES,
+    side: DEFAULT_NERVOUS_SIDE,
+    visible: [],
+   };
+   dentalSnapshotRef.current = {
+    dentalLayers: ALL_FALSE_DENTAL,
+    side: DEFAULT_NERVOUS_SIDE,
+    visible: [],
+   };
+   organsVisibleRef.current = [];
+  };
+  */
 
- const patchFaceMuscleLayers=(patch:Partial<FaceMuscleLayers>)=>{
-  setState(s=>{
-   const nextLayers={...(s.faceMuscleLayers??DEFAULT_FACE_MUSCLE_LAYERS),...patch};
-   if(activePill==='face'){
-    faceSnapshotRef.current.faceMuscleLayers=nextLayers;
-   }
-   return {
-    ...s,
-    faceMuscleLayers:nextLayers
-   };
-  });
- };
-
- const setFaceSide=(side:NervousSide)=>{
-  if(activePill==='face'){
-   faceSnapshotRef.current.side=side;
-  }
-  setState(s=>({...s,smasSide:side,smasSelection:null,reset:s.reset+1}));
- };
-
- const patchDentalLayers=(patch:Partial<DentalLayers>)=>{
-  setState(s=>{
-   const nextLayers={...(s.dentalLayers??DEFAULT_DENTAL_LAYERS),...patch};
-   if(activePill==='dental'){
-    dentalSnapshotRef.current.dentalLayers=nextLayers;
-   }
-   const anyDentalOn=Object.values(nextLayers).some(Boolean);
-   return {
-    ...s,
-    dentalLayers:nextLayers,
-    dentalOverlay:activePill==='dental'||anyDentalOn
-   };
-  });
- };
-
- const setDentalSide=(side:NervousSide)=>{
-  if(activePill==='dental'){
-   dentalSnapshotRef.current.side=side;
-  }
-  setState(s=>({...s,dentalSide:side,reset:s.reset+1}));
- };
-
- const selectPill=(pill:PillType)=>{
-  if(activePill==='all'){
-   allSnapshotRef.current={
-    visible:state.visible,
-    nervousLayers:state.nervousLayers,
-   };
-  }
-  if(activePill==='skeleton'){
-   skeletonVisibleRef.current=state.visible.filter(x=>SKELETON_SYSTEM_IDS.includes(x));
-  }
-  if(activePill==='trigeminal'){
-   trigeminalSnapshotRef.current={
-    nervousLayers:state.nervousLayers,
-    nervousSide:state.nervousSide,
-    visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
-   };
-  }
-  if(activePill==='face'){
-   faceSnapshotRef.current={
-    smasLayers:state.smasLayers??DEFAULT_SMAS_LAYERS,
-    faceMuscleLayers:state.faceMuscleLayers??DEFAULT_FACE_MUSCLE_LAYERS,
-    side:state.smasSide??DEFAULT_NERVOUS_SIDE,
-    visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
-   };
-  }
-  if(activePill==='dental'){
-   dentalSnapshotRef.current={
-    dentalLayers:state.dentalLayers??DEFAULT_DENTAL_LAYERS,
-    side:state.dentalSide??DEFAULT_NERVOUS_SIDE,
-    visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
-   };
-  }
-  if(activePill==='organs'){
-   organsVisibleRef.current=state.visible.filter(x=>ORGAN_SYSTEM_IDS.includes(x));
-  }
-  setActivePill(pill);
-  setChosen(null);
-  setDetails(false);
-
-  if(pill==='all'){
+  const patchSmasLayers=(patch:Partial<SmasLayers>)=>{
    setState(s=>{
-    const saved=allSnapshotRef.current;
-    const savedVisible=saved.visible??DEFAULT_VISIBLE;
-    const anyNervousOn=Object.values(saved.nervousLayers).some(Boolean);
-    return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,selected:[],isolate:false,visible:savedVisible};
+    const nextLayers={...(s.smasLayers??DEFAULT_SMAS_LAYERS),...patch};
+    if(activePill==='face'){
+     faceSnapshotRef.current.smasLayers=nextLayers;
+    }
+    const anySmasOn=Object.values(nextLayers).some(Boolean);
+    const anyFaceMuscleOn=s.faceMuscleLayers?Object.values(s.faceMuscleLayers).some(Boolean):false;
+    return {
+     ...s,
+     smasLayers:nextLayers,
+     smasOverlay:activePill==='face' && (anySmasOn || anyFaceMuscleOn),
+     smasSelection:anySmasOn?s.smasSelection:null
+    };
    });
-  } else if(pill==='skeleton'){
-    setState(s=>{
-     const savedSkeleton=(skeletonVisibleRef.current??SKELETON_VISIBLE).filter(x=>SKELETON_SYSTEM_IDS.includes(x));
-     return {...s,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedSkeleton};
-    });
-   } else if(pill==='trigeminal'){
-    setState(s=>{
-     const saved=trigeminalSnapshotRef.current;
-     const savedVisible=(saved.visible??TRIGEMINAL_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
-     const anyNervousOn=Object.values(saved.nervousLayers).some(Boolean);
-     return {...s,nervousOverlay:anyNervousOn,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,nervousLayers:saved.nervousLayers,nervousSide:saved.nervousSide,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
-    });
-   } else if(pill==='face'){
-    setState(s=>{
-     const saved=faceSnapshotRef.current;
-     const savedVisible=(saved.visible??FACE_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
-     return {...s,smasOverlay:true,nervousOverlay:false,dentalOverlay:false,smasSelection:null,nervousSelection:null,smasLayers:saved.smasLayers,smasSide:saved.side,faceMuscleLayers:saved.faceMuscleLayers,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
-    });
-   } else if(pill==='dental'){
-    setState(s=>{
-     const saved=dentalSnapshotRef.current;
-     const savedVisible=(saved.visible??DENTAL_VISIBLE).filter(x=>['skeletal','integumentary'].includes(x));
-     const anyDentalOn=Object.values(saved.dentalLayers).some(Boolean);
-     return {...s,dentalOverlay:anyDentalOn,nervousOverlay:false,smasOverlay:false,nervousSelection:null,smasSelection:null,dentalLayers:saved.dentalLayers,dentalSide:saved.side,selected:[],isolate:false,visible:savedVisible,view:'three-quarter',reset:s.reset+1};
-    });
-   } else if(pill==='organs'){
-    setState(s=>{
-     const savedOrgans=(organsVisibleRef.current??ORGANS_VISIBLE).filter(x=>ORGAN_SYSTEM_IDS.includes(x));
-     return {...s,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,nervousSelection:null,smasSelection:null,selected:[],isolate:false,visible:savedOrgans};
-    });
+  };
+
+  const patchFaceMuscleLayers=(patch:Partial<FaceMuscleLayers>)=>{
+   setState(s=>{
+    const nextLayers={...(s.faceMuscleLayers??DEFAULT_FACE_MUSCLE_LAYERS),...patch};
+    if(activePill==='face'){
+     faceSnapshotRef.current.faceMuscleLayers=nextLayers;
+    }
+    const anySmasOn=s.smasLayers?Object.values(s.smasLayers).some(Boolean):false;
+    const anyFaceMuscleOn=Object.values(nextLayers).some(Boolean);
+    return {
+     ...s,
+     faceMuscleLayers:nextLayers,
+     smasOverlay:activePill==='face' && (anySmasOn || anyFaceMuscleOn)
+    };
+   });
+  };
+
+  const setFaceSide=(side:NervousSide)=>{
+   if(activePill==='face'){
+    faceSnapshotRef.current.side=side;
    }
+   setState(s=>({...s,smasSide:side,smasSelection:null,reset:s.reset+1}));
+  };
+
+  const patchDentalLayers=(patch:Partial<DentalLayers>)=>{
+   setState(s=>{
+    const nextLayers={...(s.dentalLayers??DEFAULT_DENTAL_LAYERS),...patch};
+    if(activePill==='dental'){
+     dentalSnapshotRef.current.dentalLayers=nextLayers;
+    }
+    const anyDentalOn=Object.values(nextLayers).some(Boolean);
+    return {
+     ...s,
+     dentalLayers:nextLayers,
+     dentalOverlay:(activePill==='dental'||activePill==='all') && anyDentalOn
+    };
+   });
+  };
+
+  const setDentalSide=(side:NervousSide)=>{
+   if(activePill==='dental'){
+    dentalSnapshotRef.current.side=side;
+   }
+   setState(s=>({...s,dentalSide:side,reset:s.reset+1}));
+  };
+
+  const selectPill=(pill:PillType)=>{
+   if(activePill==='all'){
+    allSnapshotRef.current={
+     visible:state.visible,
+     nervousLayers:state.nervousLayers,
+    };
+   }
+   if(activePill==='skeleton'){
+    skeletonVisibleRef.current=state.visible.filter(x=>SKELETON_SYSTEM_IDS.includes(x));
+   }
+   if(activePill==='trigeminal'){
+    trigeminalSnapshotRef.current={
+     nervousLayers:state.nervousLayers,
+     nervousSide:state.nervousSide,
+     visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
+    };
+   }
+   if(activePill==='face'){
+    faceSnapshotRef.current={
+     smasLayers:state.smasLayers??ALL_FALSE_SMAS,
+     faceMuscleLayers:state.faceMuscleLayers??ALL_FALSE_FACE_MUSCLES,
+     side:state.smasSide??DEFAULT_NERVOUS_SIDE,
+     visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
+    };
+   }
+   if(activePill==='dental'){
+    dentalSnapshotRef.current={
+     dentalLayers:state.dentalLayers??ALL_FALSE_DENTAL,
+     side:state.dentalSide??DEFAULT_NERVOUS_SIDE,
+     visible:state.visible.filter(x=>['skeletal','integumentary'].includes(x))
+    };
+   }
+   if(activePill==='organs'){
+    organsVisibleRef.current=state.visible.filter(x=>ORGAN_SYSTEM_IDS.includes(x));
+   }
+   setActivePill(pill);
+   setChosen(null);
+   setDetails(false);
+
+   setState(s=>{
+    let targetSavedVisible: SystemId[] = [];
+    let targetNervousLayers: NervousLayers = ALL_FALSE_NERVOUS;
+    let targetNervousSide: NervousSide = s.nervousSide;
+    let targetSmasLayers: SmasLayers = ALL_FALSE_SMAS;
+    let targetFaceMuscleLayers: FaceMuscleLayers = ALL_FALSE_FACE_MUSCLES;
+    let targetSmasSide: NervousSide = s.smasSide ?? DEFAULT_NERVOUS_SIDE;
+    let targetDentalLayers: DentalLayers = ALL_FALSE_DENTAL;
+    let targetDentalSide: NervousSide = s.dentalSide ?? DEFAULT_NERVOUS_SIDE;
+
+    if (pill === 'all') {
+     targetSavedVisible = (allSnapshotRef.current.visible ?? DEFAULT_VISIBLE).filter(x => x !== 'reproductive');
+     targetNervousLayers = allSnapshotRef.current.nervousLayers ?? s.nervousLayers;
+    } else if (pill === 'skeleton') {
+     targetSavedVisible = (skeletonVisibleRef.current ?? SKELETON_VISIBLE).filter(x => SKELETON_SYSTEM_IDS.includes(x) && x !== 'reproductive');
+    } else if (pill === 'trigeminal') {
+     targetSavedVisible = (trigeminalSnapshotRef.current.visible ?? TRIGEMINAL_VISIBLE).filter(x => ['skeletal','integumentary'].includes(x) && x !== 'reproductive');
+     targetNervousLayers = trigeminalSnapshotRef.current.nervousLayers ?? ALL_FALSE_NERVOUS;
+     targetNervousSide = trigeminalSnapshotRef.current.nervousSide ?? s.nervousSide;
+    } else if (pill === 'face') {
+     targetSavedVisible = (faceSnapshotRef.current.visible ?? FACE_VISIBLE).filter(x => ['skeletal','integumentary'].includes(x) && x !== 'reproductive');
+     targetSmasLayers = faceSnapshotRef.current.smasLayers ?? ALL_FALSE_SMAS;
+     targetFaceMuscleLayers = faceSnapshotRef.current.faceMuscleLayers ?? ALL_FALSE_FACE_MUSCLES;
+     targetSmasSide = faceSnapshotRef.current.side ?? s.smasSide ?? DEFAULT_NERVOUS_SIDE;
+    } else if (pill === 'dental') {
+     targetSavedVisible = (dentalSnapshotRef.current.visible ?? DENTAL_VISIBLE).filter(x => ['skeletal','integumentary'].includes(x) && x !== 'reproductive');
+     targetDentalLayers = dentalSnapshotRef.current.dentalLayers ?? ALL_FALSE_DENTAL;
+     targetDentalSide = dentalSnapshotRef.current.side ?? s.dentalSide ?? DEFAULT_NERVOUS_SIDE;
+    } else if (pill === 'organs') {
+     targetSavedVisible = (organsVisibleRef.current ?? ORGANS_VISIBLE).filter(x => ORGAN_SYSTEM_IDS.includes(x) && x !== 'reproductive');
+    }
+
+    const allKnownSystems: SystemId[] = ['skeletal','muscular','cardiac','sensory','arterial','venous','nervous','respiratory','digestive','urinary','lymphatic','endocrine','integumentary','connective'];
+    const nextVisible: SystemId[] = [];
+
+    allKnownSystems.forEach(sysId => {
+     if (sysId === 'reproductive') return;
+     // FIX B/C: Scope system-level lock bleed: when switching out of All Systems, or between pills that do not share this system row,
+     // do not let locks override targetSavedVisible with the previous pill's visible state.
+     const sourceHasSystem = activePill !== 'all' && (
+      activePill === 'skeleton' ? SKELETON_SYSTEM_IDS.includes(sysId) :
+      activePill === 'organs' ? ORGAN_SYSTEM_IDS.includes(sysId) :
+      ['trigeminal', 'face', 'dental'].includes(activePill) ? ['skeletal', 'integumentary'].includes(sysId) :
+      false
+     );
+     if (locks[sysId] && sourceHasSystem) {
+      if (s.visible.includes(sysId)) {
+       nextVisible.push(sysId);
+      }
+     } else {
+      if (targetSavedVisible.includes(sysId)) {
+       nextVisible.push(sysId);
+      }
+     }
+    });
+
+    const nextNervousLayers = { ...targetNervousLayers };
+    (Object.keys(nextNervousLayers) as (keyof NervousLayers)[]).forEach(k => {
+     if (locks['nervous_' + k]) {
+      nextNervousLayers[k] = !!s.nervousLayers[k];
+     }
+    });
+
+    const nextSmasLayers = { ...targetSmasLayers };
+    (Object.keys(nextSmasLayers) as (keyof SmasLayers)[]).forEach(k => {
+     if (locks['smas_' + k]) {
+      nextSmasLayers[k] = !!(s.smasLayers?.[k]);
+     }
+    });
+
+    const nextFaceMuscleLayers = { ...targetFaceMuscleLayers };
+    (Object.keys(nextFaceMuscleLayers) as (keyof FaceMuscleLayers)[]).forEach(k => {
+     if (locks['facemuscle_' + k]) {
+      nextFaceMuscleLayers[k] = !!(s.faceMuscleLayers?.[k]);
+     }
+    });
+
+    const nextDentalLayers = { ...targetDentalLayers };
+    (Object.keys(nextDentalLayers) as (keyof DentalLayers)[]).forEach(k => {
+     if (locks['dental_' + k]) {
+      nextDentalLayers[k] = !!(s.dentalLayers?.[k]);
+     }
+    });
+
+    const anyNervousOn = Object.values(nextNervousLayers).some(Boolean);
+    const anySmasOn = Object.values(nextSmasLayers).some(Boolean);
+    const anyFaceMuscleOn = Object.values(nextFaceMuscleLayers).some(Boolean);
+    const anyDentalOn = Object.values(nextDentalLayers).some(Boolean);
+
+    const nervousOverlayOn = (pill === 'all' || pill === 'trigeminal') && anyNervousOn;
+    const smasOverlayOn = (pill === 'face') && (anySmasOn || anyFaceMuscleOn);
+    const dentalOverlayOn = (pill === 'dental' || pill === 'all') && anyDentalOn;
+
+    return {
+     ...s,
+     visible: nextVisible,
+     nervousOverlay: nervousOverlayOn,
+     smasOverlay: smasOverlayOn,
+     dentalOverlay: dentalOverlayOn,
+     nervousLayers: nextNervousLayers,
+     nervousSide: targetNervousSide,
+     smasLayers: nextSmasLayers,
+     faceMuscleLayers: nextFaceMuscleLayers,
+     smasSide: targetSmasSide,
+     dentalLayers: nextDentalLayers,
+     dentalSide: targetDentalSide,
+     nervousSelection: nervousOverlayOn ? s.nervousSelection : null,
+     smasSelection: smasOverlayOn ? s.smasSelection : null,
+     selected: [],
+     isolate: false,
+     view: (pill === 'trigeminal' || pill === 'face' || pill === 'dental') ? 'three-quarter' : s.view,
+     reset: s.reset + 1
+    };
+   });
   };
 
  const nervousDetail = state.nervousOverlay && state.nervousSelection ? overlayCard(state.nervousSelection) : null;
@@ -573,38 +720,51 @@ export default function Home(){
  // Organ group includes visceral organs, cardiac, vascular, nervous
  const organSystems = activeSystems.filter(s=>ORGAN_SYSTEM_IDS.includes(s.id));
 
- return <main className="studio">
-  {atlas&&<AnatomyScene 
-   atlas={atlas} 
-   state={{...state,inspectorOpen:details&&(selectedParts.length>0||!!state.nervousSelection||!!state.smasSelection)}} 
-   onSelect={choosePart} 
-   onNervousSelect={chooseNervousSelection}
-   onSmasSelect={chooseSmasSelection}
-   onProgress={n=>{setProgress(n);if(n===100)setError('');}} 
-   onError={setError}
-  />}
-  <div className="vignette"/>
-  {/* Commented out to free up space: Header identity */}
-  {/* <header className="identity">
-   <div className="eyebrow"><span className="status-dot"/> INTERACTIVE ANATOMY</div>
-   <h1>Human Atlas<Badge variant="outline" className="edition">3D</Badge></h1>
-   <div className="identity-meta">{atlas?atlas.parts.length.toLocaleString():'2,234'} modeled pieces <span>·</span> BodyParts3D</div>
-  </header> */}
+  return <main className="studio">
+   <div style={{ display: viewMode === 'anatomy' ? 'contents' : 'none' }}>
+    {atlas&&<AnatomyScene 
+     atlas={atlas} 
+     state={{...state,inspectorOpen:details&&(selectedParts.length>0||!!state.nervousSelection||!!state.smasSelection)}} 
+     onSelect={choosePart} 
+     onNervousSelect={chooseNervousSelection}
+     onSmasSelect={chooseSmasSelection}
+     onProgress={n=>{setProgress(n);if(n===100)setError('');}} 
+     onError={setError}
+    />}
+   </div>
+   <div className="vignette"/>
+   <div className="view-mode-toggle glass" role="tablist" aria-label="View mode">
+    <button type="button" role="tab" aria-selected={viewMode === 'anatomy'} className={viewMode === 'anatomy' ? 'active' : undefined} onClick={() => setViewMode('anatomy')}>Anatomy 3D</button>
+    <button type="button" role="tab" aria-selected={viewMode === 'imaging'} className={viewMode === 'imaging' ? 'active' : undefined} onClick={() => setViewMode('imaging')}>DICOM</button>
+   </div>
 
-  {/* Commented out to free up space: Search and info top nav */}
-  {/* <nav className="top-actions" aria-label="Explorer panels">
-   <Button variant="ghost" className={panel==='search'?'active':''} onClick={()=>openPanel('search')} aria-label="Search anatomy">
-    <Search size={18}/><span>Find a structure</span><kbd>/</kbd>
-   </Button>
-   <Button variant="ghost" className="icon-button" title="Interactive Sandbox" aria-label="Open Interactive Sandbox" onClick={()=>{ window.history.pushState({}, '', '/sandbox'); window.dispatchEvent(new Event('popstate')); }}>
-    🧪
-   </Button>
-   <Button variant="ghost" className="icon-button" aria-label="About this atlas" onClick={()=>{setDetails(false);setPanel(null);setAbout(true);}}>
-    <Info size={18}/>
-   </Button>
-  </nav> */}
+   {viewMode === 'imaging' && (
+    <div style={{ position: 'absolute', top: 70, left: 20, right: 20, bottom: 90, zIndex: 50, borderRadius: '16px', overflow: 'hidden' }}>
+     <Suspense fallback={<div style={{color: '#65717e', padding: 20}}>Loading Viewer...</div>}><DicomViewer sessionFiles={sessionFiles} /></Suspense>
+    </div>
+   )}
 
-  <section className={`layers-panel glass ${panel==='layers'?'mobile-open':''}`} aria-label="Anatomical layers">
+   {/* Commented out to free up space: Header identity */}
+   {/* <header className="identity">
+    <div className="eyebrow"><span className="status-dot"/> INTERACTIVE ANATOMY</div>
+    <h1>Human Atlas<Badge variant="outline" className="edition">3D</Badge></h1>
+    <div className="identity-meta">{atlas?atlas.parts.length.toLocaleString():'2,234'} modeled pieces <span>·</span> BodyParts3D</div>
+   </header> */}
+
+   {/* Commented out to free up space: Search and info top nav */}
+   {/* <nav className="top-actions" aria-label="Explorer panels">
+    <Button variant="ghost" className={panel==='search'?'active':''} onClick={()=>openPanel('search')} aria-label="Search anatomy">
+     <Search size={18}/><span>Find a structure</span><kbd>/</kbd>
+    </Button>
+    <Button variant="ghost" className="icon-button" title="Interactive Sandbox" aria-label="Open Interactive Sandbox" onClick={()=>{ window.history.pushState({}, '', '/sandbox'); window.dispatchEvent(new Event('popstate')); }}>
+     🧪
+    </Button>
+    <Button variant="ghost" className="icon-button" aria-label="About this atlas" onClick={()=>{setDetails(false);setPanel(null);setAbout(true);}}>
+     <Info size={18}/>
+    </Button>
+   </nav> */}
+
+   <section className={`layers-panel glass ${panel==='layers'?'mobile-open':''}`} style={{ display: viewMode === 'imaging' ? 'none' : undefined }} aria-label="Anatomical layers">
    <div className="panel-heading">
     <span>Systems</span>
     <div className="panel-heading-actions">
@@ -1147,45 +1307,55 @@ export default function Home(){
     <span>{visibleCount.toLocaleString()} pieces visible</span>
     <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
      <Button variant="ghost" onClick={lockAllCurrent} title="Lock all current rows">Lock all</Button>
-     {lockCount > 0 ? (
+     <Button variant="ghost" onClick={()=>{
+      // FIX A: only clear/update the current pill's snapshot. Do not wipe other pills' snapshots.
+      // clearAllSnapshots();
+      if (activePill === 'all') {
+       allSnapshotRef.current = {
+        visible: [],
+        nervousLayers: ALL_FALSE_NERVOUS,
+       };
+      } else if (activePill === 'skeleton') {
+       skeletonVisibleRef.current = [];
+      } else if (activePill === 'trigeminal') {
+       trigeminalSnapshotRef.current = {
+        ...trigeminalSnapshotRef.current,
+        visible: [],
+        nervousLayers: ALL_FALSE_NERVOUS,
+       };
+      } else if (activePill === 'face') {
+       faceSnapshotRef.current = {
+        ...faceSnapshotRef.current,
+        visible: [],
+        smasLayers: ALL_FALSE_SMAS,
+        faceMuscleLayers: ALL_FALSE_FACE_MUSCLES,
+       };
+      } else if (activePill === 'dental') {
+       dentalSnapshotRef.current = {
+        ...dentalSnapshotRef.current,
+        visible: [],
+        dentalLayers: ALL_FALSE_DENTAL,
+       };
+      } else if (activePill === 'organs') {
+       organsVisibleRef.current = [];
+      }
+      setState(s=>({
+       ...s,
+       visible:[],
+       selected:[],
+       isolate:false,
+       nervousOverlay:false,
+       smasOverlay:false,
+       dentalOverlay:false,
+       nervousLayers:ALL_FALSE_NERVOUS,
+       smasLayers:ALL_FALSE_SMAS,
+       faceMuscleLayers:ALL_FALSE_FACE_MUSCLES,
+       dentalLayers:ALL_FALSE_DENTAL
+      }));
+     }}>Hide all</Button>
+     {lockCount > 0 && (
       <Button variant="ghost" className="unlock-all-btn" onClick={unlockAll}>Unlock all ({lockCount})</Button>
-      ) : (
-       <Button variant="ghost" onClick={()=>{
-        if(activePill==='all'){
-         allSnapshotRef.current.visible=[];
-         allSnapshotRef.current.nervousLayers={
-          cnv:false,v1:false,v2:false,v3Jaw:false,v3Temple:false
-         };
-        }
-        if(activePill==='skeleton'){
-         skeletonVisibleRef.current=[];
-        }
-        if(activePill==='trigeminal'){
-         trigeminalSnapshotRef.current.visible=[];
-        }
-        if(activePill==='face'){
-         faceSnapshotRef.current.visible=[];
-         faceSnapshotRef.current.smasLayers={
-          smas:false,fat:false,temporal:false,zygomatic:false,buccal:false,marginal:false,cervical:false,parotid:false,lymph:false,periosteum:false
-         };
-         faceSnapshotRef.current.faceMuscleLayers={
-          masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false
-         };
-        }
-        if(activePill==='dental'){
-         dentalSnapshotRef.current.visible=[];
-         dentalSnapshotRef.current.dentalLayers={
-          upperJaw:false,lowerJaw:false,teeth:false,
-          q1:false,q2:false,q3:false,q4:false,
-          incisor:false,canine:false,premolar:false,molar:false
-         };
-        }
-        if(activePill==='organs'){
-         organsVisibleRef.current=[];
-        }
-        setState(s=>({...s,visible:[],selected:[],isolate:false,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,faceMuscleLayers:{masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false},dentalLayers:{upperJaw:false,lowerJaw:false,teeth:false,q1:false,q2:false,q3:false,q4:false,incisor:false,canine:false,premolar:false,molar:false}}));
-       }}>Hide all</Button>
-      )}
+     )}
     </div>
    </div>
   </section>
@@ -1211,24 +1381,24 @@ export default function Home(){
      <RotateCcw size={17}/></Button>
    </nav> */}
 
-  <div className="scene-caption">
+  <div className="scene-caption" style={{ display: viewMode === 'imaging' ? 'none' : undefined }}>
    <span className="caption-line"/>
    <span>{state.smasOverlay&&activePill==='face'?'FACIAL SOFT TISSUE & MUSCLES · TEACHING OVERLAY':state.nervousOverlay&&activePill==='trigeminal'?'TRIGEMINAL NERVE (CN V) · TEACHING OVERLAY':state.isolate?(chosen?.name??'SELECTED STRUCTURE'):state.explode>.95?'ANATOMICAL INVENTORY':state.explode>.05?'SEPARATED STRUCTURES':'ADULT HUMAN · MALE'}</span>
    <span className="caption-line"/>
   </div>
 
-   {/* Commented out to free up space: Explode anatomy bottom dock */}
-   {/* <div className="bottom-dock glass">
-    <Button variant="ghost" className="mobile-only dock-layers" onClick={()=>openPanel('layers')} aria-label="Open system layers">
-     <Layers3 size={20}/><span>Systems</span>
-    </Button>
-    <div className="explode-control">
-     <div className="explode-label"><label id="explode-label">Explode anatomy</label><output>{Math.round(state.explode*100)}<span>%</span></output></div>
-     <Slider aria-labelledby="explode-label" min={0} max={100} step={1} value={[state.explode*100]} onValueChange={v=>setState(s=>({...s,explode:(Array.isArray(v)?v[0]:v)/100,view:(Array.isArray(v)?v[0]:v)>80?'front':s.view,rotate:false}))}/>
-     <div className="slider-endpoints"><span>Assembled</span><span>Every piece</span></div>
-    </div>
-    <Button variant="ghost" className="dock-reset" onClick={reset} aria-label="Assemble and reset"><RotateCcw size={18}/><span>Reset</span></Button>
-   </div> */}
+  <div className="bottom-dock glass">
+   <Button variant="ghost" className="mobile-only dock-layers" onClick={()=>openPanel('layers')} aria-label="Open system layers">
+    <Layers3 size={20}/><span>Systems</span>
+   </Button>
+   <UploadSession 
+    files={sessionFiles} 
+    onAddFiles={handleAddSessionFiles} 
+    onRemoveFile={handleRemoveSessionFile} 
+    onChangeCategory={handleChangeCategory} 
+    onClearFiles={handleClearSessionFiles}
+   />
+  </div>
 
   <footer className="studio-footer">
    <span>{state.explode>.8?'Drag to pan':'Drag to orbit'} <b>·</b> Pinch to zoom <b>·</b> Tap to inspect</span>

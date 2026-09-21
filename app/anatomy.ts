@@ -106,6 +106,17 @@ export const TRIGEMINAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
 export const FACE_VISIBLE:SystemId[] = ['skeletal','integumentary'];
 export const DENTAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
 
+/** Parts permanently hidden from every system/layer view (male genital / reproductive). */
+export function isSuppressedAnatomy(p:{system:string;name:string;id:string}):boolean{
+ if(p.system==='reproductive')return true;
+ const n=p.name.toLowerCase();
+ // Penile vessels live under arterial/venous but still read as genital anatomy.
+ if(n.includes('penis')||n.includes('of penis'))return true;
+ if(n==='pubic hair')return true;
+ return false;
+}
+
+
 export const DENTAL_QUADRANT_COLORS: Record<'q1' | 'q2' | 'q3' | 'q4', string> = {
  q1: '#2aa8b8', // Upper right (Teal)
  q2: '#3daf6a', // Upper left (Emerald)

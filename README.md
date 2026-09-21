@@ -1,73 +1,25 @@
-# Human Atlas
+# Medical Records — Open Source
 
-An interactive 3D anatomy explorer built with React, Three.js, and shadcn/ui. Take the BodyParts3D adult male reference apart into **2,234 individually selectable meshes**, explore **15 anatomical systems**, and search **3,432 named concepts**.
+A patient-owned medical records app for India. All your reports, imaging, and history live in your pocket — share them with any doctor, anytime.
 
-**[Explore the live demo](https://human-atlas-seven.vercel.app)**
+## The Problem
 
-## Explore
+India has an abundance of doctors, which keeps care cheap. But the system breaks down when you need a second or third opinion. Doctors often demand fresh reports even when yours are a week old — sometimes because of referral kickbacks. Carrying physical imaging from one clinic to another is nearly impossible, so getting multiple opinions is practically out of reach.
 
-- Orbit, zoom, and select structures directly on the body.
-- Toggle individual systems or use skeleton and organ presets.
-- Move from assembled anatomy to a spaced inventory of every visible piece.
-- Search anatomical names and source identifiers.
-- Isolate a selected structure and read its details.
-- Use compact controls and detail panels on mobile.
+Existing players like Practo and House of Diagnostics are service-based SaaS. They charge doctors or lock you into their cloud. This project is open source, free, and yours.
 
-## Run locally
+## The Goal
 
-Requires Node.js 22.13 or newer. No API keys or accounts are needed.
+Give patients full control of their documentation. Pull up your records on your phone and share them instantly — no middleman, no repeat tests, no dependency on any single platform.
 
-```sh
-npm run setup
-```
+## Why Open Source
 
-For a fresh clone, the setup helper installs the locked dependencies and checks local-only files. You can run the individual commands yourself:
+India's tech community has already proven this model works. UPI replaced card machines with QR codes because phones are cheap and internet access is widespread. The same approach can fix medical records — tools built by the people who actually need them, not sold to them.
 
-```sh
-npm ci
-npm run sanitize
-npm run dev
-```
+## Who This Is For
 
-Run `npm run sanitize` before first work and before pushing changes.
+A person with chronic conditions who needs to see many specialists, can't afford to repeat expensive tests, and wants their records portable across every doctor they visit. Built first for myself, then for anyone in the same situation.
 
-Open http://localhost:3016. To build the static site, run `npm run build`; the output is in `dist/`.
+## Status
 
-## Validate
-
-```sh
-npm run check
-node scripts/validate-atlas.mjs
-node scripts/validate-interactions.mjs
-npm run build
-```
-
-Validation covers mesh buffers, names and concept membership, nonoverlapping exploded layouts at desktop and mobile aspect ratios, search and inspection contracts, and tap-versus-drag handling. Browser interaction checks have exercised selection, system controls, search, isolation, rotation, and 390×844, 320×568, and 844×390 layouts. Phone controls stay clear of the exploded inventory, and isolated structures fit the space above or beside the detail panel. Physical-device performance and real multitouch hardware have not been tested.
-
-## Anatomy data
-
-The current viewer uses **BodyParts3D 4.0**, an adult male reference anatomy, licensed **CC BY 4.0**. It does not represent every human structure or variation. Individual source meshes are distinct from named concepts, which may group multiple meshes. Descriptions distinguish general system context from individual organ explanations.
-
-Geometry is simplified for browser performance while retaining every source mesh. The packaged model contains 2,288,268 triangles and downloads approximately 33 MB of compressed geometry. Full credits, source links, and adaptation details are in [ATTRIBUTION.md](public/ATTRIBUTION.md).
-
-This is an educational explorer, not a diagnostic or surgical tool.
-
-## How it works
-
-Geometry is merged into batches. Per-structure GPU textures control translation, visibility, and selection, while component geometry supports accurate picking. Exploded layouts pack only the visible pieces. Rendering updates when the scene changes; orbit controls remain responsive without thousands of separate draw calls.
-
-The optional WebMCP tools expose anatomy search and inspection in compatible browsers. The visible interface works without them.
-
-## Rebuilding geometry
-
-The repository includes browser-ready geometry. Rebuilding it is optional: obtain the official BodyParts3D OBJ archive and English metadata tables, prepare the joined concepts and display-system mappings, run `scripts/convert-anatomy.py`, then `node scripts/optimize-anatomy.mjs` and `node scripts/compress-models.mjs`. Simplification uses a 0.2% relative error limit per structure.
-
-## Deploy
-
-Import this repository into Vercel as a Vite project. The included `vercel.json` configures `npm ci`, `npm run build`, and the `dist` output directory. It can also be served by a static host.
-
-## License
-
-Original application code is released under the [MIT License](LICENSE). **The anatomy data has its own CC BY 4.0 license**; preserve the attribution when redistributing it. Third-party dependencies retain their respective licenses.
-
-Issues and pull requests are welcome. Please include reproduction steps and browser/device details for interaction problems.
+UI is complete. Core features are scaffolded with commented sections. Built with AI-assisted tooling because I need this working now, not in six months of handwriting code. Contributions welcome.
