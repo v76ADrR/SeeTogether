@@ -156,6 +156,30 @@ export default function Home(){
  const unlockAll=()=>setLocks({});
  const lockCount=Object.values(locks).filter(Boolean).length;
 
+ const lockAllCurrent = () => {
+  setLocks(prev => {
+   const next = { ...prev };
+   if (activePill === 'all') {
+    activeSystems.forEach(s => { next[s.id] = true; });
+   } else if (activePill === 'skeleton') {
+    skeletonSystems.forEach(s => { next[s.id] = true; });
+   } else if (activePill === 'trigeminal') {
+    trigeminalBaseSystems.forEach(s => { next[s.id] = true; });
+    ['cnv', 'v1', 'v2', 'v3', 'v3Jaw', 'v3Temple'].forEach(k => { next['nervous_' + k] = true; });
+   } else if (activePill === 'face') {
+    faceBaseSystems.forEach(s => { next[s.id] = true; });
+    ['smas', 'fat', 'temporal', 'zygomatic', 'buccal', 'marginal', 'cervical', 'parotid', 'lymph', 'periosteum'].forEach(k => { next['smas_' + k] = true; });
+    ['masseter', 'temporalis', 'buccinator', 'orbicularis', 'zygomaticus', 'pterygoids'].forEach(k => { next['facemuscle_' + k] = true; });
+   } else if (activePill === 'dental') {
+    dentalBaseSystems.forEach(s => { next[s.id] = true; });
+    ['upperJaw', 'lowerJaw', 'teeth', 'q1', 'q2', 'q3', 'q4', 'incisor', 'canine', 'premolar', 'molar'].forEach(k => { next['dental_' + k] = true; });
+   } else if (activePill === 'organs') {
+    organSystems.forEach(s => { next[s.id] = true; });
+   }
+   return next;
+  });
+ };
+
  const applyLocks=(s:SceneState,focus:string):SceneState=>{
   const next={...s};
   if(focus!=='stock'){
@@ -560,19 +584,25 @@ export default function Home(){
    onError={setError}
   />}
   <div className="vignette"/>
-  <header className="identity">
+  {/* Commented out to free up space: Header identity */}
+  {/* <header className="identity">
    <div className="eyebrow"><span className="status-dot"/> INTERACTIVE ANATOMY</div>
    <h1>Human Atlas<Badge variant="outline" className="edition">3D</Badge></h1>
    <div className="identity-meta">{atlas?atlas.parts.length.toLocaleString():'2,234'} modeled pieces <span>·</span> BodyParts3D</div>
-  </header>
-  <nav className="top-actions" aria-label="Explorer panels">
+  </header> */}
+
+  {/* Commented out to free up space: Search and info top nav */}
+  {/* <nav className="top-actions" aria-label="Explorer panels">
    <Button variant="ghost" className={panel==='search'?'active':''} onClick={()=>openPanel('search')} aria-label="Search anatomy">
     <Search size={18}/><span>Find a structure</span><kbd>/</kbd>
+   </Button>
+   <Button variant="ghost" className="icon-button" title="Interactive Sandbox" aria-label="Open Interactive Sandbox" onClick={()=>{ window.history.pushState({}, '', '/sandbox'); window.dispatchEvent(new Event('popstate')); }}>
+    🧪
    </Button>
    <Button variant="ghost" className="icon-button" aria-label="About this atlas" onClick={()=>{setDetails(false);setPanel(null);setAbout(true);}}>
     <Info size={18}/>
    </Button>
-  </nav>
+  </nav> */}
 
   <section className={`layers-panel glass ${panel==='layers'?'mobile-open':''}`} aria-label="Anatomical layers">
    <div className="panel-heading">
@@ -1115,45 +1145,48 @@ export default function Home(){
 
    <div className="panel-foot">
     <span>{visibleCount.toLocaleString()} pieces visible</span>
-    {lockCount > 0 ? (
-     <Button variant="ghost" className="unlock-all-btn" onClick={unlockAll}>Unlock all ({lockCount})</Button>
-     ) : (
-      <Button variant="ghost" onClick={()=>{
-       if(activePill==='all'){
-        allSnapshotRef.current.visible=[];
-        allSnapshotRef.current.nervousLayers={
-         cnv:false,v1:false,v2:false,v3Jaw:false,v3Temple:false
-        };
-       }
-       if(activePill==='skeleton'){
-        skeletonVisibleRef.current=[];
-       }
-       if(activePill==='trigeminal'){
-        trigeminalSnapshotRef.current.visible=[];
-       }
-       if(activePill==='face'){
-        faceSnapshotRef.current.visible=[];
-        faceSnapshotRef.current.smasLayers={
-         smas:false,fat:false,temporal:false,zygomatic:false,buccal:false,marginal:false,cervical:false,parotid:false,lymph:false,periosteum:false
-        };
-        faceSnapshotRef.current.faceMuscleLayers={
-         masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false
-        };
-       }
-       if(activePill==='dental'){
-        dentalSnapshotRef.current.visible=[];
-        dentalSnapshotRef.current.dentalLayers={
-         upperJaw:false,lowerJaw:false,teeth:false,
-         q1:false,q2:false,q3:false,q4:false,
-         incisor:false,canine:false,premolar:false,molar:false
-        };
-       }
-       if(activePill==='organs'){
-        organsVisibleRef.current=[];
-       }
-       setState(s=>({...s,visible:[],selected:[],isolate:false,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,faceMuscleLayers:{masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false},dentalLayers:{upperJaw:false,lowerJaw:false,teeth:false,q1:false,q2:false,q3:false,q4:false,incisor:false,canine:false,premolar:false,molar:false}}));
-      }}>Hide all</Button>
-     )}
+    <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+     <Button variant="ghost" onClick={lockAllCurrent} title="Lock all current rows">Lock all</Button>
+     {lockCount > 0 ? (
+      <Button variant="ghost" className="unlock-all-btn" onClick={unlockAll}>Unlock all ({lockCount})</Button>
+      ) : (
+       <Button variant="ghost" onClick={()=>{
+        if(activePill==='all'){
+         allSnapshotRef.current.visible=[];
+         allSnapshotRef.current.nervousLayers={
+          cnv:false,v1:false,v2:false,v3Jaw:false,v3Temple:false
+         };
+        }
+        if(activePill==='skeleton'){
+         skeletonVisibleRef.current=[];
+        }
+        if(activePill==='trigeminal'){
+         trigeminalSnapshotRef.current.visible=[];
+        }
+        if(activePill==='face'){
+         faceSnapshotRef.current.visible=[];
+         faceSnapshotRef.current.smasLayers={
+          smas:false,fat:false,temporal:false,zygomatic:false,buccal:false,marginal:false,cervical:false,parotid:false,lymph:false,periosteum:false
+         };
+         faceSnapshotRef.current.faceMuscleLayers={
+          masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false
+         };
+        }
+        if(activePill==='dental'){
+         dentalSnapshotRef.current.visible=[];
+         dentalSnapshotRef.current.dentalLayers={
+          upperJaw:false,lowerJaw:false,teeth:false,
+          q1:false,q2:false,q3:false,q4:false,
+          incisor:false,canine:false,premolar:false,molar:false
+         };
+        }
+        if(activePill==='organs'){
+         organsVisibleRef.current=[];
+        }
+        setState(s=>({...s,visible:[],selected:[],isolate:false,nervousOverlay:false,smasOverlay:false,dentalOverlay:false,faceMuscleLayers:{masseter:false,temporalis:false,buccinator:false,orbicularis:false,zygomaticus:false,pterygoids:false},dentalLayers:{upperJaw:false,lowerJaw:false,teeth:false,q1:false,q2:false,q3:false,q4:false,incisor:false,canine:false,premolar:false,molar:false}}));
+       }}>Hide all</Button>
+      )}
+    </div>
    </div>
   </section>
 
@@ -1163,19 +1196,20 @@ export default function Home(){
    <p className="search-note">{query?'Showing up to 80 matches. Refine your search to find smaller structures.':'Start with a major organ, or search every named structure.'}</p>
   </section>}
 
-  <nav className="view-controls glass" aria-label="Camera controls">
-   {(['three-quarter','front','side','back'] as View[]).map((v,i)=>(
-    <Button variant="ghost" key={v} className={state.view===v?'active':''} aria-pressed={state.view===v} disabled={state.explode>.8&&v!=='front'} onClick={()=>setState(s=>({...s,view:v,reset:s.reset+1,rotate:false}))} title={`${v} view`} aria-label={`${v} view`}>
-     <span>{['¾','F','S','B'][i]}</span>
+   {/* Commented out to free up space: View controls toolbar */}
+   {/* <nav className="view-controls glass" aria-label="Camera controls">
+    {(['three-quarter','front','side','back'] as View[]).map((v,i)=>(
+     <Button variant="ghost" key={v} className={state.view===v?'active':''} aria-pressed={state.view===v} disabled={state.explode>.8&&v!=='front'} onClick={()=>setState(s=>({...s,view:v,reset:s.reset+1,rotate:false}))} title={`${v} view`} aria-label={`${v} view`}>
+      <span>{['¾','F','S','B'][i]}</span>
+     </Button>
+    ))}
+    <i/>
+    <Button variant="ghost" disabled={state.explode>=.4} aria-label={state.rotate?'Pause rotation':'Rotate body'} title="Auto rotate" className={state.rotate?'active':''} onClick={()=>setState(s=>({...s,rotate:!s.rotate}))}>
+     {state.rotate?<Pause size={17}/>:<RotateCw size={18}/>}
     </Button>
-   ))}
-   <i/>
-   <Button variant="ghost" disabled={state.explode>=.4} aria-label={state.rotate?'Pause rotation':'Rotate body'} title="Auto rotate" className={state.rotate?'active':''} onClick={()=>setState(s=>({...s,rotate:!s.rotate}))}>
-    {state.rotate?<Pause size={17}/>:<RotateCw size={18}/>}
-   </Button>
-   <Button variant="ghost" aria-label="Reset view and layers" title="Reset" onClick={reset}>
-    <RotateCcw size={17}/></Button>
-  </nav>
+    <Button variant="ghost" aria-label="Reset view and layers" title="Reset" onClick={reset}>
+     <RotateCcw size={17}/></Button>
+   </nav> */}
 
   <div className="scene-caption">
    <span className="caption-line"/>
@@ -1183,17 +1217,18 @@ export default function Home(){
    <span className="caption-line"/>
   </div>
 
-  <div className="bottom-dock glass">
-   <Button variant="ghost" className="mobile-only dock-layers" onClick={()=>openPanel('layers')} aria-label="Open system layers">
-    <Layers3 size={20}/><span>Systems</span>
-   </Button>
-   <div className="explode-control">
-    <div className="explode-label"><label id="explode-label">Explode anatomy</label><output>{Math.round(state.explode*100)}<span>%</span></output></div>
-    <Slider aria-labelledby="explode-label" min={0} max={100} step={1} value={[state.explode*100]} onValueChange={v=>setState(s=>({...s,explode:(Array.isArray(v)?v[0]:v)/100,view:(Array.isArray(v)?v[0]:v)>80?'front':s.view,rotate:false}))}/>
-    <div className="slider-endpoints"><span>Assembled</span><span>Every piece</span></div>
-   </div>
-   <Button variant="ghost" className="dock-reset" onClick={reset} aria-label="Assemble and reset"><RotateCcw size={18}/><span>Reset</span></Button>
-  </div>
+   {/* Commented out to free up space: Explode anatomy bottom dock */}
+   {/* <div className="bottom-dock glass">
+    <Button variant="ghost" className="mobile-only dock-layers" onClick={()=>openPanel('layers')} aria-label="Open system layers">
+     <Layers3 size={20}/><span>Systems</span>
+    </Button>
+    <div className="explode-control">
+     <div className="explode-label"><label id="explode-label">Explode anatomy</label><output>{Math.round(state.explode*100)}<span>%</span></output></div>
+     <Slider aria-labelledby="explode-label" min={0} max={100} step={1} value={[state.explode*100]} onValueChange={v=>setState(s=>({...s,explode:(Array.isArray(v)?v[0]:v)/100,view:(Array.isArray(v)?v[0]:v)>80?'front':s.view,rotate:false}))}/>
+     <div className="slider-endpoints"><span>Assembled</span><span>Every piece</span></div>
+    </div>
+    <Button variant="ghost" className="dock-reset" onClick={reset} aria-label="Assemble and reset"><RotateCcw size={18}/><span>Reset</span></Button>
+   </div> */}
 
   <footer className="studio-footer">
    <span>{state.explode>.8?'Drag to pan':'Drag to orbit'} <b>·</b> Pinch to zoom <b>·</b> Tap to inspect</span>

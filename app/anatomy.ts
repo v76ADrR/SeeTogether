@@ -12,7 +12,8 @@ export const SYSTEMS: {id:SystemId;name:string;color:string;description:string}[
  {id:'urinary',name:'Urinary',color:'#b47961',description:'The kidneys filter blood and regulate fluid, electrolyte, and acid–base balance. Urine travels through the ureters to the bladder and exits through the urethra.'},
  {id:'lymphatic',name:'Lymphatic',color:'#879f7c',description:'Lymphatic vessels return excess tissue fluid to the circulation. Lymph nodes and other lymphoid organs support immune surveillance and responses.'},
  {id:'endocrine',name:'Endocrine',color:'#c5a09a',description:'Endocrine organs release hormones into the blood to coordinate processes such as metabolism, growth, stress responses, and reproduction.'},
- {id:'reproductive',name:'Reproductive',color:'#bda098',description:'The male reproductive structures represented here contribute to sperm production, maturation, transport, and the production of sex hormones.'},
+ // Commented out to hide male genital/reproductive structures:
+ // {id:'reproductive',name:'Reproductive',color:'#bda098',description:'The male reproductive structures represented here contribute to sperm production, maturation, transport, and the production of sex hormones.'},
  {id:'integumentary',name:'Body surface',color:'#ba9b7d',description:'The body surface provides an outer anatomical reference. The integumentary system forms a protective barrier and contributes to sensation and temperature regulation.'},
  {id:'connective',name:'Connective tissue',color:'#aec3bb',description:'Cartilage, ligaments, and other connective tissues support, connect, and separate structures. Their roles include stabilizing joints and distributing mechanical loads.'},
 ];
@@ -96,11 +97,11 @@ export interface SceneState {
 }
 
 export const SKELETON_SYSTEM_IDS:SystemId[] = ['skeletal','muscular','connective','integumentary'];
-export const ORGAN_SYSTEM_IDS:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','reproductive','sensory','arterial','venous','lymphatic','nervous'];
+export const ORGAN_SYSTEM_IDS:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','sensory','arterial','venous','lymphatic','nervous'];
 
-export const DEFAULT_VISIBLE:SystemId[] = ['cardiac','sensory','skeletal','muscular','arterial','venous','nervous','respiratory','digestive','urinary','lymphatic','endocrine','reproductive','connective'];
+export const DEFAULT_VISIBLE:SystemId[] = ['cardiac','sensory','skeletal','muscular','arterial','venous','nervous','respiratory','digestive','urinary','lymphatic','endocrine','connective'];
 export const SKELETON_VISIBLE:SystemId[] = ['skeletal','connective'];
-export const ORGANS_VISIBLE:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','reproductive','sensory','arterial','venous','lymphatic'];
+export const ORGANS_VISIBLE:SystemId[] = ['cardiac','respiratory','digestive','urinary','endocrine','sensory','arterial','venous','lymphatic'];
 export const TRIGEMINAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
 export const FACE_VISIBLE:SystemId[] = ['skeletal','integumentary'];
 export const DENTAL_VISIBLE:SystemId[] = ['skeletal','integumentary'];
